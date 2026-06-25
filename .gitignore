@@ -28,5 +28,25 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# Binaries
+bin/
+dist/
+session-indexer
+
+# Go
+vendor/
+*.test
+*.out
+
+# Session recall
+.claude/session-log.md
+.claude/sessions.db
+
+# OS
+.DS_Store
+
+# Skills telemetry
+.claude/skills/fix-review/telemetry.jsonl
