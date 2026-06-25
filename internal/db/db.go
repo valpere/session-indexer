@@ -32,7 +32,7 @@ func Open(path string) (*sql.DB, error) {
 	case err == sql.ErrNoRows:
 		// meta exists but unversioned — treat as corrupt/old.
 		d.Close()
-		return nil, fmt.Errorf("schema version missing: run: session-indexer reindex")
+		return nil, fmt.Errorf("schema version missing: delete %s and re-mine to rebuild", path)
 	case err != nil:
 		// meta table absent → fresh DB; create schema.
 		if _, execErr := d.Exec(schemaSQL); execErr != nil {
@@ -42,7 +42,7 @@ func Open(path string) (*sql.DB, error) {
 		return d, nil
 	case v != SchemaVersion:
 		d.Close()
-		return nil, fmt.Errorf("schema version mismatch (%s != %s): run: session-indexer reindex", v, SchemaVersion)
+		return nil, fmt.Errorf("schema version mismatch (%s != %s): delete %s and re-mine to rebuild", v, SchemaVersion, path)
 	default:
 		return d, nil
 	}

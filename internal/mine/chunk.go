@@ -59,24 +59,33 @@ func isNoise(s string) bool {
 	return slashCmd.MatchString(t)
 }
 
-// splitToSize splits text on paragraph boundaries so each part is <= max.
-// A single paragraph longer than max is hard-split.
+// splitToSize splits text on paragraph boundaries so each part is <= max chars.
+// Uses rune-aware hard-split to preserve UTF-8 validity for Cyrillic content.
 func splitToSize(text string, max int) []string {
-	if len(text) <= max {
+	if len([]rune(text)) <= max {
 		return []string{text}
 	}
 	var parts []string
 	var cur strings.Builder
 	for _, para := range strings.Split(text, "\n\n") {
-		if cur.Len() > 0 && cur.Len()+len(para)+2 > max {
+		paraRunes := []rune(para)
+		if cur.Len() > 0 && len([]rune(cur.String()))+len(paraRunes)+2 > max {
 			parts = append(parts, strings.TrimSpace(cur.String()))
 			cur.Reset()
 		}
-		if len(para) > max {
-			for len(para) > max {
-				parts = append(parts, para[:max])
-				para = para[max:]
+		if len(paraRunes) > max {
+			// hard-split on rune boundary
+			for len(paraRunes) > max {
+				parts = append(parts, string(paraRunes[:max]))
+				paraRunes = paraRunes[max:]
 			}
+			if len(paraRunes) > 0 {
+				if cur.Len() > 0 {
+					cur.WriteString("\n\n")
+				}
+				cur.WriteString(string(paraRunes))
+			}
+			continue
 		}
 		if cur.Len() > 0 {
 			cur.WriteString("\n\n")

@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/valpere/session-indexer/internal"
@@ -47,6 +48,26 @@ func TestInsertChunkIdempotent(t *testing.T) {
 	d.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("chunk count = %d, want 1", n)
+	}
+}
+
+func TestOpenVersionMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mismatch.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open fresh: %v", err)
+	}
+	if _, err := d.Exec(`UPDATE meta SET value='99' WHERE key='schema_version'`); err != nil {
+		t.Fatalf("inject bad version: %v", err)
+	}
+	d.Close()
+
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("expected error on version mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "schema version mismatch") {
+		t.Fatalf("error = %q, want 'schema version mismatch'", err.Error())
 	}
 }
 

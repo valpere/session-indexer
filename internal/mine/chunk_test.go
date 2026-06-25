@@ -3,6 +3,7 @@ package mine
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func msg(content string) Message {
@@ -47,6 +48,29 @@ func TestChunkSplitsLongMessage(t *testing.T) {
 		}
 		if c.ChunkIndex != i {
 			t.Errorf("chunk %d has ChunkIndex %d", i, c.ChunkIndex)
+		}
+	}
+}
+
+func TestChunkCyrillicHardSplit(t *testing.T) {
+	// 1600 Cyrillic runes × 2 bytes each = 3200 bytes, single paragraph (no \n\n).
+	// Old byte-indexing would corrupt at byte 1500 (mid-rune); rune-aware split must
+	// produce 2 valid-UTF-8 chunks each ≤ 1500 runes.
+	para := strings.Repeat("ї", 1600) // ї = U+0457, 2 bytes in UTF-8
+	got := ChunkMessages([]Message{{
+		SessionID: "s1", Role: "user", MessageIndex: 0,
+		Content:   para,
+		Timestamp: "2026-06-25T10:00:00Z",
+	}})
+	if len(got) < 2 {
+		t.Fatalf("got %d chunks, want >= 2 for 1600-rune Cyrillic paragraph", len(got))
+	}
+	for i, c := range got {
+		if !utf8.ValidString(c.Content) {
+			t.Errorf("chunk %d is not valid UTF-8", i)
+		}
+		if len([]rune(c.Content)) > 1500 {
+			t.Errorf("chunk %d has %d runes, want <= 1500", i, len([]rune(c.Content)))
 		}
 	}
 }
