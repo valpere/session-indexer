@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/valpere/session-indexer/internal"
@@ -127,17 +128,23 @@ func runEmbed(dbPath string) error {
 	if err != nil {
 		return err
 	}
-	n := 0
+	var n, failed int
 	for _, p := range pending {
 		vec, err := emb.Embed(p.Content)
 		if err != nil {
+			failed++
 			continue
 		}
-		if err := db.InsertEmbedding(d, p.ID, embed.EncodeVector(vec)); err == nil {
-			n++
+		if err := db.InsertEmbedding(d, p.ID, embed.EncodeVector(vec)); err != nil {
+			failed++
+			continue
 		}
+		n++
 	}
 	fmt.Printf("Embedded %d pending chunks.\n", n)
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "warn: %d chunks failed to embed\n", failed)
+	}
 	return nil
 }
 
@@ -162,21 +169,13 @@ func printResults(res []internal.SearchResult, usedEmbeddings, asJSON bool) erro
 
 func snippet(s string) string {
 	const max = 200
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	cut := s[:max]
-	if i := lastSpace(cut); i > 0 {
+	cut := string(runes[:max])
+	if i := strings.LastIndex(cut, " "); i > 0 {
 		cut = cut[:i]
 	}
 	return cut + "…"
-}
-
-func lastSpace(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ' ' {
-			return i
-		}
-	}
-	return -1
 }
