@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 )
 
@@ -19,8 +18,6 @@ type Message struct {
 }
 
 const toolBlockCap = 2048
-
-var base64Run = regexp.MustCompile(`[A-Za-z0-9+/]{60,}`)
 
 type rawRecord struct {
 	Type      string          `json:"type"`
