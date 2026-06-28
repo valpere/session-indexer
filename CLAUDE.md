@@ -5,29 +5,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Build
-go build -o bin/session-indexer ./cmd/session-indexer
-
-# Install to PATH
-go install ./cmd/session-indexer
-
-# Test all
-go test ./...
-
-# Test single package
-go test ./internal/mine/...
-
-# Test with race detector
-go test -race ./...
-
-# Lint
-go vet ./...
-
-# Format
-gofmt -w .
+# Build, install, test, lint, format via Makefile
+make build         # build to bin/session-indexer
+make install       # go install (puts binary on PATH)
+make test          # go test ./...
+make test-race     # go test -race ./...
+make test-pkg PKG=./internal/mine  # test one package (add /... for subpackages)
+make vet           # go vet ./...
+make fmt           # gofmt -w . (mutating)
+make clean         # remove bin/session-indexer
 ```
 
-There is no Makefile yet — add one when build steps become non-trivial.
+Raw `go` invocations still work if you don't want to use make:
+`go build -o bin/session-indexer ./cmd/session-indexer`,
+`go install ./cmd/session-indexer`, `go test ./...`, `go test -race ./...`,
+`go test ./internal/mine/...`, `go vet ./...`, `gofmt -w .`.
 
 ## Architecture
 
