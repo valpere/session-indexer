@@ -43,10 +43,15 @@ Claude Code JSONL
               ▼
 ┌─────────────────────┐
 │  search cmd         │
-│  1. FTS5 → top-50   │
-│  2. load embeddings  │
-│  3. cosine re-rank   │
+│  1. embed(query)     │
+│  2. cosine over all  │
+│     embeddings rows  │
+│  3. JOIN chunks      │
 │  4. print results    │
+│  (fallback: FTS5     │
+│   BM25 if Ollama     │
+│   down OR no         │
+│   embeddings yet)    │
 └─────────────────────┘
 ```
 
@@ -111,9 +116,12 @@ Schema version check on every open:
 var v string
 db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v)
 if v != SchemaVersion {
-    return fmt.Errorf("schema version mismatch (%s != %s): run session-indexer reindex", v, SchemaVersion)
+    return fmt.Errorf("schema version mismatch (%s != %s): delete %s and re-mine to rebuild", v, SchemaVersion, path)
 }
 ```
+There is no `reindex` subcommand — schema bumps are not auto-evolved; users
+recover by deleting the DB and re-mining available JSONLs (mine is
+idempotent via `INSERT OR IGNORE`).
 
 ---
 
@@ -197,14 +205,24 @@ query string
          JOIN chunks ON id to fetch content + metadata
          → results
 
-Fallback (Ollama unavailable):
+Fallback (Ollama unavailable OR embeddings table is empty):
     FTS5 BM25:
-    SELECT chunks.id, content, session_date, role
-    FROM chunks JOIN chunks_fts ON chunks.id = chunks_fts.rowid
-    WHERE chunks_fts MATCH fts5_escape(query)
-    ORDER BY bm25(chunks_fts) LIMIT --limit
+    SELECT c.session_date, c.role, c.content, bm25(chunks_fts) AS rank
+    FROM chunks c JOIN chunks_fts ON c.id = chunks_fts.rowid
+    WHERE chunks_fts MATCH <per-term OR match>
+    ORDER BY rank LIMIT --limit
     print note: "(embedding unavailable — FTS5 keyword results only)"
-```
+
+The FTS5 query is built by splitting the user query on whitespace and
+OR-ing the terms as individually quoted FTS5 phrases (e.g. `"config"
+OR "validation"`), not wrapping the whole query in one phrase. This is
+better recall at the cost of precision — the fallback exists for
+"vaguely remember the idea, not the exact words", which is the same
+semantic-search need the cosine path solves.
+
+The fallback also triggers when Ollama is up but the store has zero
+embeddings (e.g. mined while Ollama was down, now back). Without this,
+cosine would return nothing and search would go blind.
 
 **Scale assumption:** personal session recall, <10k chunks (~40MB vectors in-memory).
 Revisit if index exceeds 50k chunks.
@@ -270,19 +288,35 @@ The Stop hook receives JSON on stdin. Relevant fields:
 }
 ```
 
-`session-end.sh` calls session-indexer after writing the summary:
+Two hooks run on every session stop, both wired inside a single `Stop` entry
+of `settings.local.json` (see warning below):
+
+- `bash .claude/hooks/session-end.sh` — writes `session-log.md` via an LLM
+  call (agy → opencode → raw transcript fallback). Includes a 2h "skill
+  already ran" mtime-skip to avoid double-work.
+- `bash .claude/hooks/session-index.sh` — runs `session-indexer mine` on the
+  transcript and silently no-ops until `session-indexer` is on PATH.
+
+`session-index.sh` (simplified):
 
 ```bash
-HOOK_INPUT=$(cat)
-SESSION_JSONL=$(echo "$HOOK_INPUT" | jq -r '.transcript_path')
+INPUT=$(cat)
+TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path')
+[[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]] && exit 0
+command -v session-indexer >/dev/null 2>&1 || exit 0
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-
-if [[ -n "$SESSION_JSONL" && "$SESSION_JSONL" != "null" && -f "$SESSION_JSONL" \
-      && -x "$(command -v session-indexer)" ]]; then
-    session-indexer mine "$SESSION_JSONL" \
-        --db "$PROJECT_ROOT/.claude/sessions.db"
-fi
+session-indexer mine "$TRANSCRIPT" --db "$PROJECT_ROOT/.claude/sessions.db"
 ```
+
+Hook logs go to `~/.cache/<project-name>/hooks.log` (per-project, derived
+from the repo name by `hook-common.sh`).
+
+> **Warning — Claude Code 2.1.x multi-Stop-hook quirk:** when `hooks.Stop`
+> is an array of multiple top-level entries, only the **first** entry's
+> commands run. Put multiple Stop commands in the **same** entry's
+> `hooks` array (the structure used here). Verified empirically:
+> 2026-06-25 to 2026-06-28, sessions went unmined until the settings
+> file was collapsed to a single entry.
 
 Note: `--project` flag removed (redundant — DB path is per-project).
 

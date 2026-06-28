@@ -62,7 +62,7 @@ internal/search/
 
 SQLite at `<project-root>/.claude/sessions.db` (gitignored, per-project). No CGO — use `modernc.org/sqlite`. Open with WAL + `synchronous=NORMAL` + `busy_timeout=5000`.
 
-Schema version stored in `meta` table (`key='schema_version'`). On open: if version mismatches, exit with "run: session-indexer reindex". Never silently evolve schema.
+Schema version stored in `meta` table (`key='schema_version'`). On open: if version mismatches, exit with "schema version mismatch (X != Y): delete <db-path> and re-mine to rebuild". There is no `reindex` subcommand; users recover by deleting the DB and re-mining available JSONLs. Never silently evolve schema.
 
 Dedup key: `UNIQUE(session_id, message_index, chunk_index)` — `INSERT OR IGNORE` makes `mine` idempotent.
 

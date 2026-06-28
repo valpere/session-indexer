@@ -83,8 +83,9 @@ ChromaDB/HNSW for this reason). A corrupted or deleted DB can be rebuilt by
 re-mining available JSONLs.
 
 Schema versioned via `meta` table (`schema_version`). On open, if version
-mismatches binary expectation: print error + "run: session-indexer reindex"
-and exit. No silent schema evolution.
+mismatches binary expectation: print wrapped error naming both versions and
+instructing the user to delete the DB and re-mine available JSONLs (mine is
+idempotent). No silent schema evolution. There is no `reindex` subcommand.
 
 ### NFR-3: Pure Go build
 
@@ -93,8 +94,8 @@ library dependencies. `go build` produces a portable binary.
 
 ### NFR-4: Performance
 
-- `mine`: index one session in <30s on CPU (embedding 100 chunks via Ollama); must complete within 60s Stop hook timeout
-- `search`: return results in <2s (FTS5 fallback), <5s (embedding cosine path)
+- `mine`: index one session in <30s on CPU (embedding 100 chunks via Ollama); must complete within 60s Stop hook timeout. Enforced internally via a 50s `context.Context` deadline. The mine run is split into two phases: (1) storing every chunk (fast, idempotent), then (2) embedding new chunks under the deadline. Chunks past the deadline are stored but flagged `Deferred` in `mine.Result` and left without an embedding row — backfill with `session-indexer embed`. Embed errors never abort a mine (counted as `Skipped`).
+- `search`: return results in <2s (FTS5 fallback), <5s (embedding cosine path). The fallback is per-term OR recall (not phrase match) and also triggers when the store has zero embeddings.
 
 ### NFR-5: Language support
 
