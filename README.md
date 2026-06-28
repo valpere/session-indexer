@@ -26,9 +26,12 @@ Optional. Requires Ollama on `localhost:11434` with `bge-m3:latest`
 (`ollama pull bge-m3:latest`). `mine` runs with a 50s `context.Context`
 deadline (headroom under the 60s Stop-hook budget): storing is fast and
 unconditional, embedding is the phase that respects the deadline. Chunks
-past the deadline are stored but flagged as deferred — backfill with
-`session-indexer embed` once Ollama is reachable. Embed errors never
-abort a mine (they count as `Skipped`).
+past the deadline are stored but flagged as **deferred** — no embedding
+row yet, backfill with `session-indexer embed` once Ollama is reachable.
+Embed errors never abort a mine — such chunks are stored and counted as
+**Skipped** (same storage state as Deferred: present in the DB, no
+embedding row, included in `stats --db` `pending`). Deferred and Skipped
+differ only in cause (deadline vs error), not in backfill path.
 
 When Ollama is unavailable or the store has zero embeddings, `search`
 falls back to FTS5 BM25 with per-term OR recall (not phrase match) and
