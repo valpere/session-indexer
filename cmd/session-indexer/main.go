@@ -107,12 +107,12 @@ func main() {
 				return err
 			}
 			defer d.Close()
-			st, err := search.GetStats(d)
+			st, err := search.GetStats(d, dbPath)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Sessions indexed: %d\nChunks total:     %d\nWith embeddings:  %d (%d pending)\nOldest entry:     %s\nNewest entry:     %s\n",
-				st.Sessions, st.Chunks, st.Embedded, st.Pending, st.Oldest, st.Newest)
+			fmt.Printf("Sessions indexed: %d\nChunks total:     %d\nWith embeddings:  %d (%d pending)\nOldest entry:     %s\nNewest entry:     %s\nDB size:          %s\n",
+				st.Sessions, st.Chunks, st.Embedded, st.Pending, st.Oldest, st.Newest, st.DBSize)
 			return nil
 		},
 	}

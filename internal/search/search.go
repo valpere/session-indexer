@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 
@@ -141,10 +142,12 @@ type Stats struct {
 	Pending  int
 	Oldest   string
 	Newest   string
+	DBSize   string // human-readable on-disk size, e.g. "4.2 MB"
 }
 
-// GetStats reports index counts and date range.
-func GetStats(d *sql.DB) (Stats, error) {
+// GetStats reports index counts, date range, and on-disk DB size. dbPath is
+// the file path used to measure size (SQLite has no portable SQL for it).
+func GetStats(d *sql.DB, dbPath string) (Stats, error) {
 	var s Stats
 	q := func(query string, dest any) error { return d.QueryRow(query).Scan(dest) }
 	if err := q(`SELECT COUNT(DISTINCT session_id) FROM chunks`, &s.Sessions); err != nil {
@@ -166,5 +169,22 @@ func GetStats(d *sql.DB) (Stats, error) {
 	if newest.Valid {
 		s.Newest = newest.String
 	}
+	// On-disk size is best-effort; a missing/unstatable file leaves it blank.
+	if fi, err := os.Stat(dbPath); err == nil {
+		s.DBSize = humanBytes(fi.Size())
+	}
 	return s, nil
+}
+
+// humanBytes formats a byte count as a short human-readable size.
+func humanBytes(n int64) string {
+	const unit = 1024.0
+	f := float64(n)
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	for f >= unit && i < len(units)-1 {
+		f /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", f, units[i])
 }

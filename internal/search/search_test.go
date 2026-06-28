@@ -138,11 +138,14 @@ func TestGetStats(t *testing.T) {
 	dbp := seed(t, stubEmbedder{avail: true})
 	d, _ := db.Open(dbp)
 	defer d.Close()
-	st, err := GetStats(d)
+	st, err := GetStats(d, dbp)
 	if err != nil {
 		t.Fatalf("GetStats: %v", err)
 	}
 	if st.Chunks != 2 || st.Embedded != 2 || st.Pending != 0 {
 		t.Fatalf("stats = %+v", st)
+	}
+	if st.DBSize == "" {
+		t.Fatal("DBSize empty, want a human-readable size from os.Stat")
 	}
 }
