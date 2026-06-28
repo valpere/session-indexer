@@ -1,6 +1,7 @@
 package mine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestRunInsertsChunksAndEmbeds(t *testing.T) {
 	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`
 	jp := writeJSONL(t, jsonl)
 	dbp := filepath.Join(t.TempDir(), "sessions.db")
-	res, err := Run(dbp, jp, fakeEmbedder{avail: true})
+	res, err := Run(context.Background(), dbp, jp, fakeEmbedder{avail: true})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -41,10 +42,10 @@ func TestRunIdempotent(t *testing.T) {
 	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`
 	jp := writeJSONL(t, jsonl)
 	dbp := filepath.Join(t.TempDir(), "sessions.db")
-	if _, err := Run(dbp, jp, fakeEmbedder{avail: false}); err != nil {
+	if _, err := Run(context.Background(), dbp, jp, fakeEmbedder{avail: false}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Run(dbp, jp, fakeEmbedder{avail: false})
+	res, err := Run(context.Background(), dbp, jp, fakeEmbedder{avail: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestRunSkippedOnEmbedError(t *testing.T) {
 	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`
 	jp := writeJSONL(t, jsonl)
 	dbp := filepath.Join(t.TempDir(), "sessions.db")
-	res, err := Run(dbp, jp, errEmbedder{})
+	res, err := Run(context.Background(), dbp, jp, errEmbedder{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -75,11 +76,29 @@ func TestRunSkipsEmbeddingsWhenUnavailable(t *testing.T) {
 	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`
 	jp := writeJSONL(t, jsonl)
 	dbp := filepath.Join(t.TempDir(), "sessions.db")
-	res, err := Run(dbp, jp, fakeEmbedder{avail: false})
+	res, err := Run(context.Background(), dbp, jp, fakeEmbedder{avail: false})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.ChunksInserted != 1 || res.Embedded != 0 {
 		t.Fatalf("result = %+v, want 1 inserted / 0 embedded", res)
+	}
+}
+
+// TestRunDefersEmbeddingWhenContextDone verifies that when the deadline has
+// passed, chunks are still stored but embedding is deferred (left pending for
+// the `embed` subcommand to backfill). This guards the 60s Stop-hook budget.
+func TestRunDefersEmbeddingWhenContextDone(t *testing.T) {
+	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`
+	jp := writeJSONL(t, jsonl)
+	dbp := filepath.Join(t.TempDir(), "sessions.db")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // deadline already reached
+	res, err := Run(ctx, dbp, jp, fakeEmbedder{avail: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ChunksInserted != 1 || res.Embedded != 0 || res.Deferred != 1 {
+		t.Fatalf("result = %+v, want 1 inserted / 0 embedded / 1 deferred", res)
 	}
 }

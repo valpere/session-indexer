@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 
@@ -14,14 +15,23 @@ import (
 )
 
 // Search returns up to limit ranked results. usedEmbeddings is false when
-// the FTS5 fallback was used.
+// the FTS5 fallback was used. Fallback also triggers when Ollama is up but the
+// store has no embeddings yet (e.g. mined while Ollama was down, now back) —
+// cosine would return nothing, so we don't go blind.
 func Search(d *sql.DB, emb embed.Embedder, query string, limit int) ([]internal.SearchResult, bool, error) {
-	if emb.Available() {
+	if emb.Available() && hasEmbeddings(d) {
 		res, err := cosineSearch(d, emb, query, limit)
 		return res, true, err
 	}
 	res, err := ftsSearch(d, query, limit)
 	return res, false, err
+}
+
+// hasEmbeddings reports whether at least one embedding row exists.
+func hasEmbeddings(d *sql.DB) bool {
+	var ok int
+	err := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM embeddings)`).Scan(&ok)
+	return err == nil && ok == 1
 }
 
 func cosineSearch(d *sql.DB, emb embed.Embedder, query string, limit int) ([]internal.SearchResult, error) {
@@ -69,7 +79,10 @@ func cosineSearch(d *sql.DB, emb embed.Embedder, query string, limit int) ([]int
 }
 
 func ftsSearch(d *sql.DB, query string, limit int) ([]internal.SearchResult, error) {
-	match := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+	match := ftsMatchExpr(query)
+	if match == "" {
+		return nil, nil // no usable terms; caller prints "(no results)"
+	}
 	rows, err := d.Query(
 		`SELECT c.session_date, c.role, c.content, bm25(chunks_fts) AS rank
 		 FROM chunks c JOIN chunks_fts ON c.id = chunks_fts.rowid
@@ -90,6 +103,19 @@ func ftsSearch(d *sql.DB, query string, limit int) ([]internal.SearchResult, err
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ftsMatchExpr builds an OR of quoted terms from the query for keyword recall.
+// The fallback exists for the "I half-remember the idea, not the words" case,
+// so a phrase match (requiring adjacency) is too strict: splitting on
+// whitespace and OR-ing the terms matches any. Each term is FTS-quoted with
+// internal double quotes doubled. Returns "" when there are no usable terms.
+func ftsMatchExpr(query string) string {
+	var terms []string
+	for _, w := range strings.Fields(query) {
+		terms = append(terms, `"`+strings.ReplaceAll(w, `"`, `""`)+`"`)
+	}
+	return strings.Join(terms, " OR ")
 }
 
 func cosine(a, b []float32) float64 {
@@ -116,10 +142,12 @@ type Stats struct {
 	Pending  int
 	Oldest   string
 	Newest   string
+	DBSize   string // human-readable on-disk size, e.g. "4.2 MB"
 }
 
-// GetStats reports index counts and date range.
-func GetStats(d *sql.DB) (Stats, error) {
+// GetStats reports index counts, date range, and on-disk DB size. dbPath is
+// the file path used to measure size (SQLite has no portable SQL for it).
+func GetStats(d *sql.DB, dbPath string) (Stats, error) {
 	var s Stats
 	q := func(query string, dest any) error { return d.QueryRow(query).Scan(dest) }
 	if err := q(`SELECT COUNT(DISTINCT session_id) FROM chunks`, &s.Sessions); err != nil {
@@ -141,5 +169,22 @@ func GetStats(d *sql.DB) (Stats, error) {
 	if newest.Valid {
 		s.Newest = newest.String
 	}
+	// On-disk size is best-effort; a missing/unstatable file leaves it blank.
+	if fi, err := os.Stat(dbPath); err == nil {
+		s.DBSize = humanBytes(fi.Size())
+	}
 	return s, nil
+}
+
+// humanBytes formats a byte count as a short human-readable size.
+func humanBytes(n int64) string {
+	const unit = 1024.0
+	f := float64(n)
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	for f >= unit && i < len(units)-1 {
+		f /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", f, units[i])
 }
