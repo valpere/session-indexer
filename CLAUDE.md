@@ -49,7 +49,7 @@ internal/db/
   db.go                           — open, WAL, busy_timeout, schema version check
   schema.sql                      — embedded via go:embed
 internal/mine/
-  mine.go                         — orchestrate: parse → chunk → store → embed (two-phase: store first, embed respects ctx deadline; deferred chunks backfilled via `embed`)
+  mine.go                         — orchestrate: parse → chunk → store → embed (two-phase: store first, embed respects ctx deadline; deferred chunks backfilled via `embed`). Defines `mine.Result` (ChunksInserted / Embedded / Skipped / Deferred).
   parse.go                        — JSONL → []Message
   chunk.go                        — []Message → []Chunk (split, filter, truncate; rune-safe hard-split for Cyrillic)
 internal/embed/
@@ -84,7 +84,7 @@ Primary: embed query → exhaustive cosine over all `embeddings` rows loaded int
 
 - **Pure Go, no CGO.** `go build` must produce a portable static binary.
 - **Go 1.26+.** Use `go 1.26` in `go.mod`.
-- **60-second budget.** `mine` runs inside a Claude Code Stop hook. Must complete well within 60s.
+- **60-second budget.** `mine` runs inside a Claude Code Stop hook. Must complete well within 60s (enforced internally via a 50s `context.Context` deadline — see Embeddings).
 - **Mixed Ukrainian + English content.** `bge-m3` handles both; `unicode61 remove_diacritics 0` tokenizer for FTS5.
 - **Per-project isolation.** No cross-project search, no shared state.
 
