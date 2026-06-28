@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/valpere/session-indexer/internal"
@@ -34,15 +36,23 @@ func main() {
 				return fmt.Errorf("--db is required")
 			}
 			emb := embed.NewClient()
-			res, err := mine.Run(dbPath, args[0], emb)
+			// 50s deadline leaves headroom under the 60s Stop-hook budget;
+			// chunks past the deadline are stored but deferred to `embed`.
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+			defer cancel()
+			res, err := mine.Run(ctx, dbPath, args[0], emb)
 			if err != nil {
 				return err
 			}
-			if res.Embedded == 0 && res.ChunksInserted > 0 {
+			if res.Embedded == 0 && res.ChunksInserted > 0 && res.Deferred == 0 {
 				fmt.Fprintln(os.Stderr, "warn: ollama unavailable, indexed without embeddings")
 			}
-			fmt.Printf("mined: %d chunks inserted, %d embedded, %d skipped\n",
-				res.ChunksInserted, res.Embedded, res.Skipped)
+			if res.Deferred > 0 {
+				fmt.Fprintf(os.Stderr, "warn: %d chunks deferred (run: session-indexer embed --db %s)\n",
+					res.Deferred, dbPath)
+			}
+			fmt.Printf("mined: %d chunks inserted, %d embedded, %d skipped, %d deferred\n",
+				res.ChunksInserted, res.Embedded, res.Skipped, res.Deferred)
 			return nil
 		},
 	}
