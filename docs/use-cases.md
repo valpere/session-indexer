@@ -43,13 +43,14 @@ alternative weeks ago but can't remember the exact wording.
 **Trigger:** Val closes Claude Code (or runs `/exit`).
 
 **Flow:**
-1. Stop hook fires: `bash .claude/hooks/session-end.sh`
-2. Hook reads `transcript_path` from stdin JSON.
-3. Hook writes summary, then calls `session-indexer mine <transcript_path> --db .claude/sessions.db`
-4. Binary opens/creates DB (schema version check), parses JSONL, filters noise, chunks messages (user/assistant/tool).
-5. Inserts chunks into `chunks` + `chunks_fts`. Dedup by `(session_id, message_index, chunk_index)`.
-6. For each chunk: calls Ollama `bge-m3` to generate embedding, stores in `embeddings`.
-7. Exits in <30s (well within 60s hook timeout).
+1. Stop hook fires: both `bash .claude/hooks/session-end.sh` and `bash .claude/hooks/session-index.sh` (wired into a single `Stop` entry of `settings.local.json` — Claude Code 2.1.x runs only the first top-level entry, so both must live in the same entry's `hooks` array).
+2. Each hook reads `transcript_path` from stdin JSON.
+3. `session-end.sh` writes summary to `session-log.md` (LLM call via agy → opencode → raw transcript fallback).
+4. `session-index.sh` calls `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db` (silently no-ops until the binary is on PATH).
+5. Binary opens/creates DB (schema version check), parses JSONL, filters noise, chunks messages (user/assistant/tool).
+6. Inserts chunks into `chunks` + `chunks_fts`. Dedup by `(session_id, message_index, chunk_index)`.
+7. For each chunk: calls Ollama `bge-m3` to generate embedding, stores in `embeddings`. Chunks past the 50s `context.Context` deadline are stored but flagged `Deferred` (no embedding row yet); backfill with `session-indexer embed` once Ollama is reachable. Embed errors never abort the mine (counted as `Skipped`).
+8. Exits in <30s in the happy path (well within 60s hook timeout); can use up to 50s before deferring.
 
 **Success:** Session indexed before JSONL is cleaned up by Claude Code.
 
