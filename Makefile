@@ -3,7 +3,7 @@
 help:
 	@echo "Targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*?##"}; {printf "  %-12s %s\n", $$1, $$2}'
-	@echo "Run \`make\` (default: build) or \`make -n <target>\` to see what a target does."
+	@echo "Run \`make -n <target>\` to see what a target does."
 
 BINARY := bin/session-indexer
 TEST_PKG ?= ./...
