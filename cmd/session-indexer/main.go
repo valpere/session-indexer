@@ -44,8 +44,11 @@ func main() {
 			if err != nil {
 				return err
 			}
+			// No embeddings at all and nothing deferred: either Ollama was
+			// unavailable or every Embed call failed. Don't claim a cause we
+			// can't confirm — just point at the backfill command.
 			if res.Embedded == 0 && res.ChunksInserted > 0 && res.Deferred == 0 {
-				fmt.Fprintln(os.Stderr, "warn: ollama unavailable, indexed without embeddings")
+				fmt.Fprintf(os.Stderr, "warn: indexed without embeddings — run: session-indexer embed --db %s\n", dbPath)
 			}
 			if res.Deferred > 0 {
 				fmt.Fprintf(os.Stderr, "warn: %d chunks deferred (run: session-indexer embed --db %s)\n",
