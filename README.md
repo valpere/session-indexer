@@ -23,10 +23,27 @@ session-indexer stats  --db .claude/sessions.db
 ## Embeddings
 
 Optional. Requires Ollama on `localhost:11434` with `bge-m3:latest`
-(`ollama pull bge-m3:latest`). When unavailable, `mine` indexes without
-embeddings and `search` falls back to FTS5 keyword ranking.
+(`ollama pull bge-m3:latest`). `mine` runs with a 50s `context.Context`
+deadline (headroom under the 60s Stop-hook budget): storing is fast and
+unconditional, embedding is the phase that respects the deadline. Chunks
+past the deadline are stored but flagged as deferred — backfill with
+`session-indexer embed` once Ollama is reachable. Embed errors never
+abort a mine (they count as `Skipped`).
+
+When Ollama is unavailable or the store has zero embeddings, `search`
+falls back to FTS5 BM25 with per-term OR recall (not phrase match) and
+prints an output note indicating the lower quality.
 
 ## Automatic indexing
 
-A Stop hook (`.claude/hooks/session-index.sh`) runs `mine` on every session end.
-It no-ops until `session-indexer` is on PATH.
+A Stop hook fires on every session end. It runs two commands inside one
+`Stop` entry of `settings.local.json`: `bash .claude/hooks/session-end.sh`
+(writes `session-log.md`) and `bash .claude/hooks/session-index.sh`
+(runs `session-indexer mine <transcript> --db .claude/sessions.db`).
+`session-index.sh` silently no-ops until `session-indexer` is on PATH.
+
+> Note: in Claude Code 2.1.x, only the first top-level `Stop` entry's
+> commands run. Put multiple Stop commands in the **same** entry's
+> `hooks` array (the structure used here).
+
+Hook logs go to `~/.cache/<project-name>/hooks.log`.
