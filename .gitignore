@@ -50,3 +50,6 @@ vendor/
 
 # Skills telemetry
 .claude/skills/fix-review/telemetry.jsonl
+
+# SDD scratch — implementation plans written by writing-plans skill
+docs/superpowers/
