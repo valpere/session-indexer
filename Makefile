@@ -1,7 +1,7 @@
 .PHONY: build install test test-race test-pkg vet fmt clean
 
 BINARY := bin/session-indexer
-PKG ?= ./...
+TEST_PKG ?= ./...
 
 build:
 	go build -o $(BINARY) ./cmd/session-indexer
@@ -10,10 +10,10 @@ install:
 	go install ./cmd/session-indexer
 
 test:
-	go test $(PKG)
+	go test $(TEST_PKG)
 
 test-race:
-	go test -race $(PKG)
+	go test -race $(TEST_PKG)
 
 test-pkg:
 	@test -n "$(PKG)" || (echo "PKG is required, e.g. make test-pkg PKG=./internal/mine" && exit 1)
