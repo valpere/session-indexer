@@ -79,6 +79,15 @@ func main() {
 			if err != nil {
 				return err
 			}
+			// Warn when cosine was used but some chunks lack embeddings:
+			// those chunks are invisible to search until `embed` backfills them.
+			if used {
+				if st, e := search.GetStats(d, dbPath); e == nil && st.Pending > 0 {
+					fmt.Fprintf(os.Stderr,
+						"warn: %d chunks not yet embedded — results may be incomplete; run: session-indexer embed --db %s\n",
+						st.Pending, dbPath)
+				}
+			}
 			return printResults(res, used, asJSON)
 		},
 	}
@@ -143,7 +152,7 @@ func runEmbed(dbPath string) error {
 	}
 	var n, failed int
 	for _, p := range pending {
-		vec, err := emb.Embed(p.Content)
+		vec, err := emb.Embed(context.Background(), p.Content)
 		if err != nil {
 			failed++
 			continue

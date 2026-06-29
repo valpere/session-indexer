@@ -3,6 +3,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"math"
@@ -35,7 +36,7 @@ func hasEmbeddings(d *sql.DB) bool {
 }
 
 func cosineSearch(d *sql.DB, emb embed.Embedder, query string, limit int) ([]internal.SearchResult, error) {
-	qv, err := emb.Embed(query)
+	qv, err := emb.Embed(context.Background(), query)
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}

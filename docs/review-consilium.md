@@ -57,7 +57,7 @@ Added `message_index` and `chunk_index` columns to schema. `created_at` kept for
 
 ### H5. No schema migration strategy (claude, cursor, kilo)
 
-✅ Resolved: `meta` table with `schema_version`; mismatch → error + "run reindex".
+✅ Resolved: `meta` table with `schema_version`; mismatch → error + "delete the DB and re-mine" (there is no `reindex` subcommand).
 
 ### H6. Large tool outputs pass noise filter (claude)
 
