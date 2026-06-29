@@ -334,7 +334,8 @@ relevant past session chunks as `additionalContext`.
 SESSION_START hooks:
   1. session-last.sh   — injects last session-log.md entry (structured summary)
   2. session-recall.sh — derives a query from git branch + last 3 commit messages,
-                         runs `session-indexer search --json`, filters tool-call noise,
+                         runs `session-indexer search "$QUERY" --db "$DB" --limit 5 --json`,
+                         filters tool-call noise,
                          groups by date, injects top 3 dates × 2 chunks
 ```
 

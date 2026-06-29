@@ -21,7 +21,7 @@ available JSONLs (`mine` is idempotent).
 - **Go 1.26+** — to build the binary
 - **Ollama** — for vector embeddings (optional but recommended)
   - `ollama pull bge-m3:latest` — 1024-dim multilingual model (EN + UA)
-- **jq** — used by the SessionStart hook to parse search results
+- **jq** — used by the SessionStart hook to format the hook output JSON
 - **python3** — used by the `/recall` skill and `session-recall.sh` for output formatting
 
 ## Quick Start
