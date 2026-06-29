@@ -16,12 +16,17 @@ import (
 	"github.com/valpere/session-indexer/internal/search"
 )
 
+// version is the current release; overridden at build time via
+// -ldflags "-X main.version=x.y.z" (see Makefile).
+var version = "0.1.0"
+
 func main() {
 	var dbPath string
 
 	root := &cobra.Command{
 		Use:           "session-indexer",
 		Short:         "Index and semantically search Claude Code sessions",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

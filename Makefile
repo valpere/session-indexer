@@ -5,14 +5,16 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*?##"}; {printf "  %-12s %s\n", $$1, $$2}'
 	@echo "Run \`make -n <target>\` to see what a target does."
 
-BINARY := bin/session-indexer
+BINARY   := bin/session-indexer
 TEST_PKG ?= ./...
+VERSION  := $(shell git describe --tags --exact-match 2>/dev/null || echo "0.1.0")
+LDFLAGS  := -ldflags "-X main.version=$(VERSION)"
 
 build: ## build to bin/session-indexer
-	go build -o $(BINARY) ./cmd/session-indexer
+	go build $(LDFLAGS) -o $(BINARY) ./cmd/session-indexer
 
 install: ## go install (puts binary on PATH)
-	go install ./cmd/session-indexer
+	go install $(LDFLAGS) ./cmd/session-indexer
 
 test: ## go test ./...
 	go test $(TEST_PKG)
