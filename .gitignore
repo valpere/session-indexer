@@ -53,3 +53,5 @@ vendor/
 
 # SDD scratch — implementation plans written by writing-plans skill
 docs/superpowers/
+
+tmp/

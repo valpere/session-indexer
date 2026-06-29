@@ -72,6 +72,52 @@ alternative weeks ago but can't remember the exact wording.
 
 ---
 
+## UC-5: Automatic context injection at session start
+
+**Actor:** Claude Code SessionStart hook (`session-recall.sh`).
+
+**Trigger:** Val opens a new Claude Code session in this project.
+
+**Flow:**
+1. SessionStart fires: `session-recall.sh` derives a query from the current git
+   branch name + last 3 commit messages.
+2. Runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 5 --json`.
+3. Filters out tool-call noise (raw JSON blobs from Bash/Read/Write/etc.).
+4. Groups top results by date, truncates to 280 chars each.
+5. Emits a `hookSpecificOutput` JSON with `additionalContext` injected into the
+   session context by Claude Code.
+6. Claude opens the session with relevant past chunks already visible.
+
+**Success:** Claude begins the session with semantically relevant context from prior
+work — without Val having to remember to ask.
+
+**No-op conditions** (silent exit 0):
+- `session-indexer` not in PATH
+- `.claude/sessions.db` does not exist yet (first session)
+- derived query is empty (no git context)
+- search returns no chunks after noise filtering
+
+---
+
+## UC-6: Manual search via /recall skill
+
+**Actor:** Val, mid-session, wanting to search past sessions interactively.
+
+**Trigger:** Val types `/recall <query>` in Claude Code.
+
+**Flow:**
+1. Claude Code invokes `.claude/skills/session-recall/SKILL.md`.
+2. The skill runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 10 --json`.
+3. Python post-processing formats results: date · role · score · snippet (400 chars).
+4. Tool-call chunks are flagged `[tool]` but not hidden.
+5. Results printed in the session.
+
+`/recall stats` shows index state (sessions, chunks, embeddings, pending).
+
+**Success:** Val sees matching past chunks inline without leaving Claude Code.
+
+---
+
 ## UC-7: Backfill missing embeddings
 
 **Actor:** Val, after Ollama was unavailable during earlier mines.
@@ -88,7 +134,7 @@ alternative weeks ago but can't remember the exact wording.
 
 ---
 
-## UC-5: Rebuild index from existing JSONLs
+## UC-8: Rebuild index from existing JSONLs
 
 **Actor:** Val, after a DB corruption or on a new machine.
 
@@ -111,7 +157,7 @@ alternative weeks ago but can't remember the exact wording.
 
 ---
 
-## UC-6: Inspect index state
+## UC-9: Inspect index state
 
 **Actor:** Val, troubleshooting.
 
