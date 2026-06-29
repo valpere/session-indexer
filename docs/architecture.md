@@ -263,10 +263,13 @@ session-indexer/
 │   └── architecture.md
 ├── .claude/
 │   ├── hooks/
-│   │   ├── session-end.sh
-│   │   ├── session-last.sh
+│   │   ├── session-end.sh    — Stop: LLM summary → session-log.md
+│   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db
+│   │   ├── session-last.sh   — SessionStart: inject last summary
+│   │   ├── session-recall.sh — SessionStart: semantic context injection
 │   │   └── _lib/hook-common.sh
-│   ├── skills/              — injected from common
+│   ├── skills/
+│   │   └── session-recall/SKILL.md  — /recall <query> skill
 │   └── settings.local.json
 ├── .gitignore
 ├── go.mod                   — go 1.26
@@ -322,11 +325,41 @@ Note: `--project` flag removed (redundant — DB path is per-project).
 
 ---
 
-## Open Questions
+## Integration: SessionStart Hook
 
-1. Should embeddings be generated synchronously during `mine` (blocking, slower)
-   or queued and generated in a separate `embed` pass?
-   → Synchronous for now; revisit if 60s hook timeout is hit in practice.
-2. Should `search` output be structured (JSON) for use in skills/pipes,
-   or human-readable only?
-   → Human-readable default + `--json` flag for scripting.
+`session-recall.sh` fires on every `SessionStart` event and injects semantically
+relevant past session chunks as `additionalContext`.
+
+```bash
+SESSION_START hooks:
+  1. session-last.sh   — injects last session-log.md entry (structured summary)
+  2. session-recall.sh — derives a query from git branch + last 3 commit messages,
+                         runs `session-indexer search "$QUERY" --db "$DB" --limit 5 --json`,
+                         filters tool-call noise,
+                         groups by date, injects top 3 dates × 2 chunks
+```
+
+The query is derived automatically — no user input required:
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/[_\/-]/ /g')
+COMMITS=$(git log --oneline -3 | cut -d' ' -f2- | tr '\n' ' ')
+QUERY="$BRANCH $COMMITS"
+```
+
+Output format (injected as `additionalContext`):
+```
+Relevant past sessions (semantic search):
+
+### 2026-06-28
+  [0.91] We decided to use a ring buffer for the event queue to avoid allocations…
+  [0.87] The db.Open idempotency comes from INSERT OR IGNORE on the dedup index…
+
+### 2026-06-20
+  [0.82] Chunker splits on paragraph boundaries, max 1500 chars per chunk…
+```
+
+`session-recall.sh` silently no-ops if:
+- `session-indexer` is not in PATH
+- `.claude/sessions.db` does not exist yet (first session)
+- the derived query is empty (no git context)
+
