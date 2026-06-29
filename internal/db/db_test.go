@@ -71,6 +71,43 @@ func TestOpenVersionMismatch(t *testing.T) {
 	}
 }
 
+func TestChunksWithoutEmbeddingsEmptyDB(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	pending, err := ChunksWithoutEmbeddings(d)
+	if err != nil {
+		t.Fatalf("ChunksWithoutEmbeddings on empty DB: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("empty DB has %d pending chunks, want 0", len(pending))
+	}
+}
+
+func TestInsertEmbeddingReplacement(t *testing.T) {
+	// INSERT OR REPLACE must overwrite the previous embedding, not duplicate it.
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
+		MessageIndex: 0, ChunkIndex: 0, Content: "test chunk content here", CreatedAt: "2026-06-25T10:00:00Z"}
+	id, _, _ := InsertChunk(d, c)
+	if err := InsertEmbedding(d, id, []byte{1, 0, 0, 0}); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	if err := InsertEmbedding(d, id, []byte{2, 0, 0, 0}); err != nil {
+		t.Fatalf("second insert (replace): %v", err)
+	}
+	var count int
+	d.QueryRow(`SELECT COUNT(*) FROM embeddings WHERE chunk_id=?`, id).Scan(&count)
+	if count != 1 {
+		t.Fatalf("embedding count = %d, want 1 (INSERT OR REPLACE)", count)
+	}
+	var blob []byte
+	d.QueryRow(`SELECT vector FROM embeddings WHERE chunk_id=?`, id).Scan(&blob)
+	if len(blob) == 0 || blob[0] != 2 {
+		t.Fatalf("stored vector first byte = %v, want 2 (latest value)", blob)
+	}
+}
+
 func TestInsertEmbeddingAndPendingList(t *testing.T) {
 	d, _ := Open(tempDB(t))
 	defer d.Close()

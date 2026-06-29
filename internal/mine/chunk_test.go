@@ -52,6 +52,33 @@ func TestChunkSplitsLongMessage(t *testing.T) {
 	}
 }
 
+func TestChunkNoiseBoundary(t *testing.T) {
+	// 29 chars = noise; 30 chars = kept.
+	short := strings.Repeat("a", 29)
+	exact := strings.Repeat("a", 30)
+	if got := ChunkMessages([]Message{msg(short)}); len(got) != 0 {
+		t.Errorf("29-char content produced %d chunks, want 0 (noise)", len(got))
+	}
+	if got := ChunkMessages([]Message{msg(exact)}); len(got) != 1 {
+		t.Errorf("30-char content produced %d chunks, want 1", len(got))
+	}
+}
+
+func TestChunkEmptyTimestampFallsBack(t *testing.T) {
+	m := Message{SessionID: "s1", Role: "user", MessageIndex: 0,
+		Content: "long enough content to not be filtered by noise", Timestamp: ""}
+	got := ChunkMessages([]Message{m})
+	if len(got) != 1 {
+		t.Fatalf("got %d chunks, want 1", len(got))
+	}
+	if got[0].SessionDate == "" {
+		t.Fatal("SessionDate empty, want fallback date")
+	}
+	if got[0].CreatedAt == "" {
+		t.Fatal("CreatedAt empty, want fallback timestamp")
+	}
+}
+
 func TestChunkCyrillicHardSplit(t *testing.T) {
 	// 1600 Cyrillic runes × 2 bytes each = 3200 bytes, single paragraph (no \n\n).
 	// Old byte-indexing would corrupt at byte 1500 (mid-rune); rune-aware split must

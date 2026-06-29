@@ -135,6 +135,31 @@ func TestSearchFTSMatchesNonAdjacentTerms(t *testing.T) {
 	}
 }
 
+func TestCosineZeroVector(t *testing.T) {
+	a := []float32{0, 0, 0}
+	b := []float32{1, 0, 0}
+	if got := cosine(a, b); got != 0 {
+		t.Fatalf("cosine(zero, x) = %v, want 0", got)
+	}
+	if got := cosine(a, a); got != 0 {
+		t.Fatalf("cosine(zero, zero) = %v, want 0", got)
+	}
+}
+
+func TestCosineMismatchedLength(t *testing.T) {
+	a := []float32{1, 0}
+	b := []float32{1, 0, 0}
+	if got := cosine(a, b); got != 0 {
+		t.Fatalf("cosine(mismatched lengths) = %v, want 0", got)
+	}
+}
+
+func TestCosineEmptyVectors(t *testing.T) {
+	if got := cosine(nil, nil); got != 0 {
+		t.Fatalf("cosine(nil, nil) = %v, want 0", got)
+	}
+}
+
 func TestGetStats(t *testing.T) {
 	dbp := seed(t, stubEmbedder{avail: true})
 	d, _ := db.Open(dbp)
