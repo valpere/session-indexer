@@ -3,18 +3,22 @@ package embed
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
 // Embedder produces vectors and reports availability.
 type Embedder interface {
 	Available() bool
-	Embed(text string) ([]float32, error)
+	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
 // Client is an Ollama-backed Embedder.
@@ -24,8 +28,24 @@ type Client struct {
 	http    *http.Client
 }
 
-// NewClient returns a client for local Ollama with the bge-m3 model.
-func NewClient() *Client { return NewClientURL("http://localhost:11434", "bge-m3:latest") }
+// NewClient returns a client configured from environment:
+//
+//	OLLAMA_HOST  — base URL (default: http://localhost:11434);
+//	               if value has no scheme, http:// is prepended
+//	OLLAMA_MODEL — embedding model (default: bge-m3:latest)
+func NewClient() *Client {
+	baseURL := os.Getenv("OLLAMA_HOST")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	} else if !strings.Contains(baseURL, "://") {
+		baseURL = "http://" + baseURL
+	}
+	model := os.Getenv("OLLAMA_MODEL")
+	if model == "" {
+		model = "bge-m3:latest"
+	}
+	return NewClientURL(baseURL, model)
+}
 
 // NewClientURL builds a client against an arbitrary base URL (tests).
 func NewClientURL(baseURL, model string) *Client {
@@ -57,13 +77,26 @@ func (c *Client) Available() bool {
 }
 
 // Embed returns the embedding for text via POST /api/embed.
-func (c *Client) Embed(text string) ([]float32, error) {
+// The request is cancelled when ctx is done, enforcing the caller's deadline.
+// A 30s HTTP client timeout acts as a per-call backstop.
+func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	body, _ := json.Marshal(map[string]any{"model": c.model, "input": text})
-	resp, err := c.http.Post(c.baseURL+"/api/embed", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("ollama embed: status %d: %s",
+			resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
 	var out struct {
 		Embeddings [][]float32 `json:"embeddings"`
 	}

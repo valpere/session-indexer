@@ -64,7 +64,7 @@ Extract `user` and `assistant` turns where `isMeta=false`. Skip XML/HTML (`<`), 
 
 ### Embeddings
 
-Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims). Probe first with `GET /api/tags` (2s timeout) — if unavailable, skip embeddings and log a warning. Store as `encoding/binary` LittleEndian float32 BLOB.
+Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims). Override with `OLLAMA_HOST` (URL or `host:port`) and `OLLAMA_MODEL` env vars. Probe first with `GET /api/tags` (2s timeout) — if unavailable, skip embeddings and log a warning. Store as `encoding/binary` LittleEndian float32 BLOB.
 
 `mine` runs with a 50s `context.Context` deadline (headroom under the 60s Stop-hook budget). Storing is fast and unconditional; embedding is the phase that respects the deadline. Chunks past the deadline are stored but flagged `Deferred` in the `Result` and left without an embedding row — backfill with `session-indexer embed`. Embed errors never abort the mine (counted as `Skipped`).
 

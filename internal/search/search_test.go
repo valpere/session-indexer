@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -15,7 +16,7 @@ type stubEmbedder struct {
 }
 
 func (s stubEmbedder) Available() bool { return s.avail }
-func (s stubEmbedder) Embed(text string) ([]float32, error) {
+func (s stubEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
 	if v, ok := s.vecs[text]; ok {
 		return v, nil
 	}

@@ -1,9 +1,11 @@
 package embed
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -54,11 +56,46 @@ func TestEmbedReturnsVector(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientURL(srv.URL, "bge-m3:latest")
-	v, err := c.Embed("hello")
+	v, err := c.Embed(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
 	if len(v) != 3 || v[0] != 0.5 {
 		t.Fatalf("vector = %v", v)
+	}
+}
+
+// TestEmbedSurfacesHTTPStatus verifies that a non-2xx response returns a
+// useful status error instead of a vague decode failure.
+func TestEmbedSurfacesHTTPStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"model loading failed"}`))
+	}))
+	defer srv.Close()
+	c := NewClientURL(srv.URL, "bge-m3:latest")
+	_, err := c.Embed(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected error for 500 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("error should mention status 500, got: %v", err)
+	}
+}
+
+// TestEmbedRespectsContextCancellation verifies that a cancelled ctx aborts
+// the HTTP request — this is the mechanism that enforces the 50s mine deadline.
+func TestEmbedRespectsContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block until the client cancels.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c := NewClientURL(srv.URL, "bge-m3:latest")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	_, err := c.Embed(ctx, "test")
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
 	}
 }

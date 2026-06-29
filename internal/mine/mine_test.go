@@ -12,7 +12,7 @@ import (
 type fakeEmbedder struct{ avail bool }
 
 func (f fakeEmbedder) Available() bool { return f.avail }
-func (f fakeEmbedder) Embed(string) ([]float32, error) {
+func (f fakeEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0.1, 0.2, 0.3}, nil
 }
 
@@ -56,8 +56,10 @@ func TestRunIdempotent(t *testing.T) {
 
 type errEmbedder struct{}
 
-func (e errEmbedder) Available() bool                 { return true }
-func (e errEmbedder) Embed(string) ([]float32, error) { return nil, fmt.Errorf("embed failed") }
+func (e errEmbedder) Available() bool { return true }
+func (e errEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, fmt.Errorf("embed failed")
+}
 
 func TestRunSkippedOnEmbedError(t *testing.T) {
 	jsonl := `{"type":"user","sessionId":"s1","timestamp":"2026-06-25T10:00:00Z","message":{"role":"user","content":"This is a long enough question about database design choices."}}`

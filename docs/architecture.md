@@ -4,7 +4,7 @@
 
 ## Overview
 
-A single Go binary with three subcommands. No daemon, no server, no shared
+A single Go binary with four subcommands. No daemon, no server, no shared
 state between projects.
 
 ```
@@ -142,7 +142,7 @@ Content extraction:
 | `user` where `isMeta=false` | extract `message.content` |
 | `assistant` where `isMeta=false` | extract `message.content[].text` (type=text blocks) |
 | `tool_use` blocks (inside assistant content) | extract `name` + text fields from `input` (skip binary/path-only inputs) |
-| `tool_result` blocks (inside user content) | extract text content; skip if base64/binary heuristic (length >10KB or matches `^[A-Za-z0-9+/]{60,}`) |
+| `tool_result` blocks (inside user content) | extract text content; skip if binary heuristic (length >10KB) — regex `^[A-Za-z0-9+/]{60,}` was removed as too broad (matched valid long alphanumeric output) |
 | anything else | skip |
 
 Tool content truncation:
@@ -165,9 +165,9 @@ Chunking:
 
 Ollama REST call:
 ```
-POST http://localhost:11434/api/embed
+POST http://localhost:11434/api/embed   (default; override with OLLAMA_HOST)
 {
-  "model": "bge-m3:latest",
+  "model": "bge-m3:latest",            (default; override with OLLAMA_MODEL)
   "input": "<chunk content>"
 }
 → { "embeddings": [[float32 × 1024]] }
@@ -175,7 +175,8 @@ POST http://localhost:11434/api/embed
 
 Storage: `encoding/binary` LittleEndian float32 slice → BLOB.
 
-Cosine similarity computed in Go at query time over candidates returned by FTS5.
+Cosine similarity computed in Go at query time, exhaustively over **all** stored
+embedding vectors (FTS5 is only the fallback path, not a pre-filter).
 
 Ollama probe before embedding:
 ```
@@ -224,6 +225,14 @@ The fallback also triggers when Ollama is up but the store has zero
 embeddings (e.g. mined while Ollama was down, now back). Without this,
 cosine would return nothing and search would go blind.
 
+**Partial embedding store:** cosine search activates as soon as any
+embedding row exists (`hasEmbeddings` checks for ≥1 row). Chunks that
+are stored but not yet embedded (deferred or skipped during `mine`) are
+invisible to cosine search until `embed` backfills them — FTS fallback
+does **not** activate for a partial store. `search` warns on stderr when
+pending embeddings exist: `warn: N chunks not yet embedded — results may
+be incomplete; run: session-indexer embed --db <path>`.
+
 **Scale assumption:** personal session recall, <10k chunks (~40MB vectors in-memory).
 Revisit if index exceeds 50k chunks.
 
@@ -261,7 +270,8 @@ session-indexer/
 │   ├── requirements.md
 │   ├── use-cases.md
 │   └── architecture.md
-├── .claude/
+├── .claude/                   — LOCAL ONLY (gitignored, not committed)
+│   │                            Canonical source: ~/wrk/common/skills/session-recall/
 │   ├── hooks/
 │   │   ├── session-end.sh    — Stop: LLM summary → session-log.md
 │   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db

@@ -1,6 +1,6 @@
 # Requirements: session-indexer
 
-Source: `~/wrk/common/investigations/session-recall-semantic-search.md`
+Source: [`docs/investigation/session-recall-semantic-search.md`](investigation/session-recall-semantic-search.md)
 
 ---
 

@@ -1,5 +1,7 @@
 # session-indexer
 
+[![CI](https://github.com/valpere/session-indexer/actions/workflows/ci.yml/badge.svg)](https://github.com/valpere/session-indexer/actions/workflows/ci.yml)
+
 Per-project semantic search over Claude Code session history. Indexes JSONL
 transcripts into a per-project SQLite store; retrieves via bge-m3 embeddings
 (Ollama) with FTS5 BM25 fallback. Automatically injects relevant past context
@@ -96,12 +98,19 @@ FTS5 fallback mode (higher is always better in both cases).
 
 ## Embeddings
 
-Requires Ollama on `localhost:11434` with `bge-m3:latest`. `mine` runs with a
-50s `context.Context` deadline (headroom under the 60s Stop-hook budget):
-storing is fast and unconditional; embedding respects the deadline. Chunks past
-the deadline are stored but `Deferred` (no embedding row); backfill with
-`session-indexer embed`. Embed errors count as `Skipped` — same storage state,
-same backfill path, different cause.
+Requires Ollama on `localhost:11434` with `bge-m3:latest`. Override with
+environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL (scheme optional: `localhost:11434` works) |
+| `OLLAMA_MODEL` | `bge-m3:latest` | Embedding model name |
+
+`mine` runs with a 50s `context.Context` deadline (headroom under the 60s
+Stop-hook budget): storing is fast and unconditional; embedding respects the
+deadline. Chunks past the deadline are stored but `Deferred` (no embedding row);
+backfill with `session-indexer embed`. Embed errors count as `Skipped` — same
+storage state, same backfill path, different cause.
 
 When Ollama is unavailable or the store has zero embeddings, `search` falls back
 to FTS5 BM25 with per-term OR recall and notes this in the output.
@@ -156,6 +165,12 @@ Delete the DB and re-run `mine` on your JSONLs — `mine` is idempotent.
 session-indexer stats --db .claude/sessions.db   # check pending count
 session-indexer embed --db .claude/sessions.db   # backfill embeddings
 ```
+
+**Search warns "N chunks not yet embedded — results may be incomplete":**
+Some chunks are stored but have no embedding (interrupted mine, Ollama was
+down, or deadline hit). Cosine search only ranks embedded chunks — unembedded
+ones are invisible until backfilled. FTS5 fallback only activates when zero
+embeddings exist, not for a partial store. Fix: run `session-indexer embed`.
 
 **Read hook logs:**
 ```bash

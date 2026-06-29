@@ -75,7 +75,7 @@ func Run(ctx context.Context, dbPath, jsonlPath string, emb embed.Embedder) (Res
 			res.Deferred++
 			continue
 		}
-		vec, err := emb.Embed(p.content)
+		vec, err := emb.Embed(ctx, p.content)
 		if err != nil {
 			res.Skipped++
 			continue
