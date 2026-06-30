@@ -12,16 +12,26 @@ at session start.
 gives you "where I left off last time"; `session-indexer` gives you "what we
 discussed across all history" — by semantic similarity, not grep.
 
-**Why not mempalace?** Mempalace uses a centralised mutable store shared across
-all projects. A single corruption wipes history for every project. `session-indexer`
-is append-only and per-project (`.claude/sessions.db`) — the worst that can
-happen is losing one project's DB, which is fully recoverable by re-mining the
-available JSONLs (`mine` is idempotent).
+**Why not a centralised memory tool?**
+[mempalace](https://github.com/MemPalace/mempalace) and
+[agentmemory](https://github.com/rohitg00/agentmemory) both maintain a single
+shared store across every project and agent — mempalace in ChromaDB, agentmemory
+via an `iii` engine MCP server. That architecture has one fatal flaw: **if the
+central store dies, everything dies.** A corrupt ChromaDB index or a crashed MCP
+server takes down memory for all your projects simultaneously, and recovery is
+non-trivial.
+
+`session-indexer` is per-project and append-only (`.claude/sessions.db` lives
+inside the project's `.claude/` dir). The worst failure mode is losing one
+project's DB — fully recoverable by re-running `mine` on the available JSONLs,
+since `mine` is idempotent. Every project is isolated; nothing you do in one
+can break another.
 
 ## Prerequisites
 
 - **Go 1.26+** — to build the binary
 - **Ollama** — for vector embeddings (optional but recommended)
+  - Install: [ollama.com/download](https://ollama.com/download) — native packages for macOS, Linux, Windows
   - `ollama pull bge-m3:latest` — 1024-dim multilingual model (EN + UA)
 - **jq** — used by the SessionStart hook to format the hook output JSON
 - **python3** — used by the `/recall` skill and `session-recall.sh` for output formatting
