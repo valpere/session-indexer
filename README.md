@@ -33,8 +33,7 @@ can break another.
 - **Ollama** — for vector embeddings (optional but recommended)
   - Install: [ollama.com/download](https://ollama.com/download) — native packages for macOS, Linux, Windows
   - `ollama pull bge-m3:latest` — 1024-dim multilingual model (EN + UA)
-- **jq** — used by the SessionStart hook to format the hook output JSON
-- **python3** — used by the `/recall` skill and `session-recall.sh` for output formatting
+- **jq** — used by hooks and `/recall` for JSON formatting
 
 ## Quick Start
 
