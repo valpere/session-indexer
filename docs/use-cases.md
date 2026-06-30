@@ -108,7 +108,7 @@ work — without Val having to remember to ask.
 **Flow:**
 1. Claude Code invokes `.claude/skills/session-recall/SKILL.md`.
 2. The skill runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 10 --json`.
-3. Python post-processing formats results: date · role · score · snippet (400 chars).
+3. `jq` formats results: date · role · score · snippet (400 chars).
 4. Tool-call chunks are flagged `[tool]` but not hidden.
 5. Results printed in the session.
 
