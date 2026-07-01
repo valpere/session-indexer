@@ -13,13 +13,20 @@ gives you "where I left off last time"; `session-indexer` gives you "what we
 discussed across all history" — by semantic similarity, not grep.
 
 **Why not a centralised memory tool?**
-[mempalace](https://github.com/MemPalace/mempalace) and
-[agentmemory](https://github.com/rohitg00/agentmemory) both maintain a single
-shared store across every project and agent — mempalace in ChromaDB, agentmemory
-via an `iii` engine MCP server. That architecture has one fatal flaw: **if the
-central store dies, everything dies.** A corrupt ChromaDB index or a crashed MCP
-server takes down memory for all your projects simultaneously, and recovery is
-non-trivial.
+[mempalace](https://github.com/MemPalace/mempalace),
+[agentmemory](https://github.com/rohitg00/agentmemory), and
+[MemMachine](https://github.com/MemMachine/MemMachine) all run on a single
+shared backend — mempalace in ChromaDB, agentmemory via an `iii` engine MCP
+server, MemMachine via a Neo4j + SQL backend behind a REST server
+(self-hosted or their managed cloud; MemMachine does add logical per-tenant
+isolation via org/project IDs, unlike the other two). That single-backend
+architecture still has one fatal flaw: **if it dies, everything on it dies
+at once.** A corrupt ChromaDB index, a crashed MCP server, or an unreachable
+MemMachine/Neo4j instance takes down memory for every project and tenant
+depending on that instance simultaneously, and recovery is non-trivial.
+MemMachine in particular targets multi-tenant SaaS agent products (CRM,
+healthcare, finance assistants) — a different problem than a solo dev's
+per-project recall tool.
 
 `session-indexer` is per-project and append-only (`.claude/sessions.db` lives
 inside the project's `.claude/` dir). The worst failure mode is losing one
