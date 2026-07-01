@@ -174,3 +174,28 @@ work — without Val having to remember to ask.
    ```
 
 **Success:** Val understands the state of the index without opening SQLite directly.
+
+---
+
+## UC-10: Orchestrator recalls history before spawning a subagent
+
+**Actor:** Claude Code orchestrating agent (main session), about to delegate
+work via the Agent tool.
+
+**Trigger:** A subagent's task (e.g. an architecture decision, a bug
+diagnosis) would benefit from prior discussion in this project, but
+subagents start cold — no `SessionStart` hook, no shared context.
+
+**Flow:**
+1. Orchestrator runs `session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json` directly — documented in `.claude/skills/session-recall/SKILL.md` under "For orchestrators / subagent prep".
+2. Formats results with `jq` (date, role, snippet — no noise filtering, unlike `/recall`).
+3. Folds the relevant snippets into the subagent's prompt, since subagent prompts must be self-contained.
+
+**Success:** The subagent starts with accurate historical context instead of
+re-deriving decisions already made, without the subagent itself needing
+search access.
+
+**Limitation:** Orchestrator-side only — current subagent tool allowlists
+(`bug-fixer`, `code-generator`, `tech-lead`, etc.) exclude the `Skill` tool,
+so a spawned subagent cannot invoke `/recall` or this entrypoint itself
+mid-task.
