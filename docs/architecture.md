@@ -277,7 +277,7 @@ session-indexer/
 │   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db
 │   │   ├── session-last.sh   — SessionStart: inject last summary
 │   │   ├── session-recall.sh — SessionStart: semantic context injection
-│   │   └── _lib/hook-common.sh
+│   │   └── _lib/hook-common.sh  — logging + shared session-log.md rotation (jq/bash, no python3)
 │   ├── skills/
 │   │   └── session-recall/SKILL.md  — /recall <query> skill + orchestrator subagent-prep section
 │   └── settings.local.json
@@ -306,7 +306,9 @@ of `settings.local.json` (see warning below):
 
 - `bash .claude/hooks/session-end.sh` — writes `session-log.md` via an LLM
   call (agy → opencode → raw transcript fallback). Includes a 2h "skill
-  already ran" mtime-skip to avoid double-work.
+  already ran" mtime-skip to avoid double-work. JSONL excerpt extraction,
+  the opencode JSON-lines response parse, and the log rotation itself are
+  all `jq`/bash — no python3.
 - `bash .claude/hooks/session-index.sh` — runs `session-indexer mine` on the
   transcript and silently no-ops until `session-indexer` is on PATH.
 
@@ -314,7 +316,7 @@ of `settings.local.json` (see warning below):
 
 ```bash
 INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path')
+TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 [[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]] && exit 0
 command -v session-indexer >/dev/null 2>&1 || exit 0
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
