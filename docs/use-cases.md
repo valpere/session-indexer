@@ -188,7 +188,10 @@ subagents start cold — no `SessionStart` hook, no shared context.
 
 **Flow:**
 1. Orchestrator runs `session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json` directly — documented in `.claude/skills/session-recall/SKILL.md` under "For orchestrators / subagent prep".
-2. Formats results with `jq` (date, role, snippet — no noise filtering, unlike `/recall`).
+2. Formats results with `jq` (date, role, snippet). Unlike `/recall`, this
+   path skips the tool-call noise filter (the regex that drops raw
+   Bash/Read/Write/etc. JSON blobs) — the orchestrator curates what goes
+   into the subagent prompt anyway.
 3. Folds the relevant snippets into the subagent's prompt, since subagent prompts must be self-contained.
 
 **Success:** The subagent starts with accurate historical context instead of

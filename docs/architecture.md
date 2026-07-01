@@ -378,9 +378,10 @@ Relevant past sessions (semantic search):
 ## Orchestrator / Subagent Recall Pattern
 
 Subagents spawned via the Agent tool start cold — no `SessionStart` hook, no
-shared context. `.claude/skills/session-recall/SKILL.md` documents a second
-entrypoint, distinct from `/recall`, meant for the *orchestrator* to invoke
-before spawning a subagent whose task benefits from project history:
+shared context. `.claude/skills/session-recall/SKILL.md` documents the same
+`search` subcommand used by `/recall`, but for a different caller: the
+*orchestrator*, invoking it directly before spawning a subagent whose task
+benefits from project history (rather than through the Skill tool):
 
 ```bash
 session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json \
