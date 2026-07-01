@@ -307,7 +307,7 @@ of `settings.local.json` (see warning below):
 - `bash .claude/hooks/session-end.sh` — writes `session-log.md` via an LLM
   call (agy → opencode → raw transcript fallback). Includes a 2h "skill
   already ran" mtime-skip to avoid double-work. JSONL excerpt extraction,
-  the opencode JSON-lines response parse, and the log rotation itself are
+  the opencode JSONL response parsing, and the log rotation itself are
   all `jq`/bash — no python3.
 - `bash .claude/hooks/session-index.sh` — runs `session-indexer mine` on the
   transcript and silently no-ops until `session-indexer` is on PATH.
