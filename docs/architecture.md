@@ -279,7 +279,7 @@ session-indexer/
 │   │   ├── session-recall.sh — SessionStart: semantic context injection
 │   │   └── _lib/hook-common.sh
 │   ├── skills/
-│   │   └── session-recall/SKILL.md  — /recall <query> skill
+│   │   └── session-recall/SKILL.md  — /recall <query> skill + orchestrator subagent-prep section
 │   └── settings.local.json
 ├── .gitignore
 ├── go.mod                   — go 1.26
@@ -372,4 +372,25 @@ Relevant past sessions (semantic search):
 - `session-indexer` is not in PATH
 - `.claude/sessions.db` does not exist yet (first session)
 - the derived query is empty (no git context)
+
+---
+
+## Orchestrator / Subagent Recall Pattern
+
+Subagents spawned via the Agent tool start cold — no `SessionStart` hook, no
+shared context. `.claude/skills/session-recall/SKILL.md` documents the same
+`search` subcommand used by `/recall`, but for a different caller: the
+*orchestrator*, invoking it directly before spawning a subagent whose task
+benefits from project history (rather than through the Skill tool):
+
+```bash
+session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json \
+  | jq -r '.[] | "[\(.SessionDate) · \(.Role)] \(.Content[0:300])"'
+```
+
+Results are folded into the subagent's prompt (subagent prompts must be
+self-contained). This is orchestrator-side only: current subagent tool
+allowlists (`bug-fixer`, `code-generator`, `tech-lead`, etc.) exclude the
+`Skill` tool, so a spawned subagent cannot invoke `/recall` or this
+entrypoint itself mid-task.
 
