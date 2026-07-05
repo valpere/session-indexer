@@ -45,6 +45,9 @@ vendor/
 .claude/session-log.md
 .claude/sessions.db
 
+# Claude Code local-only settings — never commit (per-machine hook wiring)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 
