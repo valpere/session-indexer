@@ -130,6 +130,9 @@ Limitations:
   don't include the `Skill` tool — a spawned subagent can't invoke `/recall`
   or this skill itself mid-task. This section is for the orchestrator to run
   *before* spawning, not for the subagent to run on its own.
+  Same root cause as the general agent/skill boundary documented in
+  `~/wrk/common/skills/README.md`'s design principles — see that note
+  before assuming any skill will auto-trigger inside a subagent.
 - No tool-call noise filtering here (unlike `/recall <query>` and
   `session-recall.sh`) — the orchestrator curates what goes into the
   subagent prompt anyway; filter manually if a query pulls in noise.

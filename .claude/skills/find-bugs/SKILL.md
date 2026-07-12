@@ -1,87 +1,161 @@
 ---
 name: find-bugs
-description: "Find bugs, security vulnerabilities, and code quality issues in branch changes. Report-only — no code changes. Usage: /find-bugs [topic]"
+description: "Read-only bug audit of the current branch vs a base ref. Dispatches subagents per stack (Go, JS/TS, etc.), consolidates findings, produces a prioritized report. Does not fix. Usage: /find-bugs [base-ref]"
 ---
 
 # Skill: /find-bugs
-# Code Review — Bug & Vulnerability Hunt
+# Bug Audit — Read-Only
 
-Report only. Do not make changes.
-
----
-
-## Phase 1 — Input Gathering
-
-1. Get the full diff: `git diff $(git merge-base main HEAD)...HEAD`
-2. If truncated, read each changed file individually until every changed line is seen.
-3. List all modified files before proceeding. Do not skip any.
+Audit the current branch for bugs without touching code. Produces a
+prioritized report; user decides what to fix.
 
 ---
 
-## Phase 2 — Attack Surface Mapping
+## Steps
 
-For each changed file, identify and list:
+### Step 1 — Determine scope
 
-- All **user-controlled inputs** (URL params, request bodies, query strings, form fields)
-- All **external calls** — are errors checked? are timeouts set? are responses closed/consumed?
-- All **state mutations** — shared state modified without locks? mutation visible to other goroutines/threads?
-- All **file/path operations** — paths constructed from user data?
-- All **resource allocations** — unbounded loops or allocations on user-supplied sizes?
-- All **silent failures** — errors swallowed, empty fallbacks, missing nil/null checks?
+```bash
+BASE="${1:-main}"
 
----
+# If on a feature branch: diff vs base
+git rev-parse --verify "$BASE" 2>/dev/null && \
+  DIFF=$(git diff "$BASE"...HEAD) || \
+  DIFF=$(git diff HEAD~10...HEAD)
 
-## Phase 3 — Security Checklist
+# Fallback: on main with no base arg → recent commits
+if [[ -z "$DIFF" ]]; then
+  DIFF=$(git log --since='2 weeks ago' -p --no-merges)
+fi
 
-Check every item against every changed file:
-
-- [ ] **Injection** — user input reaching SQL queries, shell commands, file paths, template strings?
-- [ ] **Hardcoded secrets** — API keys, passwords, tokens in changed code?
-- [ ] **Auth bypass** — can authentication or authorization checks be skipped?
-- [ ] **Information disclosure** — error messages returning stack traces, internal paths, or sensitive data?
-- [ ] **Path traversal** — file paths constructed from user-supplied strings without sanitization?
-- [ ] **Request body limits** — is unbounded user-supplied data size possible?
-- [ ] **Missing null/nil checks** — pointer dereference or null access on values that could be absent?
-- [ ] **Race conditions** — shared mutable state accessed from concurrent paths?
-- [ ] **Dependency confusion** — any new unreviewed packages introduced?
-
-> **Stack-specific items:** run `/generate-find-bugs` to add language/framework checklists
-> (Go: goroutine leaks, context propagation; JS: XSS, prototype pollution; etc.)
-
----
-
-## Phase 4 — Verification
-
-For each potential issue:
-- Check if it is already guarded elsewhere in the changed code.
-- Read at least 10 lines of surrounding context to confirm the issue is real.
-- Only report issues you can substantiate with evidence from the diff.
-
----
-
-## Phase 5 — Pre-Conclusion Audit
-
-Before finalizing:
-1. List every file reviewed — confirm each was read completely.
-2. List every checklist item: issue found, or confirmed clean.
-3. List anything you could NOT fully verify and why.
-
----
-
-## Output Format
-
-**Priority:** security vulnerabilities > correctness bugs > performance > code quality
-
-**Skip:** style, formatting, naming preferences
-
-For each issue:
-
-```
-**File:Line** — brief description
-Severity  : Critical / High / Medium / Low
-Problem   : what's wrong
-Evidence  : why this is real (no existing guard, language semantics confirm it)
-Fix       : concrete suggestion
+echo "Auditing $(git rev-parse --abbrev-ref HEAD) vs $BASE"
+echo "Diff size: $(echo "$DIFF" | wc -l) lines"
 ```
 
-If nothing significant: say so — don't invent issues.
+If diff > 2000 lines: warn and ask if user wants to narrow scope
+(specific files or commits) before proceeding.
+
+### Step 2 — Read project context
+
+```bash
+head -100 CLAUDE.md 2>/dev/null
+cat .claude/context-essentials.md 2>/dev/null
+
+# Detect stack
+cat go.mod 2>/dev/null | head -3
+cat package.json 2>/dev/null | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+print({**d.get('dependencies',{}), **d.get('devDependencies',{})}.keys())
+" 2>/dev/null
+
+# Changed files by type
+git diff "$BASE"...HEAD --name-only | sort
+```
+
+### Step 3 — Dispatch stack-aware subagents
+
+Dispatch **in parallel** based on detected stack. Each subagent gets:
+- The full diff
+- Project context (CLAUDE.md / context-essentials.md excerpt)
+- Stack-specific checklist (below)
+
+**Always dispatch — Generic bug finder:**
+
+Checklist:
+- Null/nil dereference on unchecked return values
+- Resource leaks (files, connections, goroutines not closed/cancelled)
+- Unhandled errors silently discarded (`_ = err`, bare `catch {}`)
+- Off-by-one in loops, slice bounds, index arithmetic
+- Race conditions: shared mutable state accessed from goroutines/async
+- Incorrect error propagation (wrapping lost, status code swallowed)
+- Context not propagated into blocking calls
+- Missing timeout on external calls (HTTP, DB, queue)
+
+**If `.go` files changed — Go reviewer:**
+
+Additional checklist:
+- `defer f.Close()` missing after open (cursor/file leak)
+- `sync.Mutex` copied by value
+- `go func()` capturing loop variable by reference (pre-Go 1.22)
+- `http.Response.Body` not closed
+- `context.WithCancel` leak (cancel not called on all paths)
+- Integer overflow in slice/index math
+- `iota` misuse in const blocks
+
+**If `.ts` / `.tsx` / `.js` files changed — JS/TS reviewer:**
+
+Additional checklist:
+- `await` missing on async calls (fire-and-forget)
+- Unhandled promise rejection
+- `useEffect` missing dependency array or stale closure
+- `JSON.parse` without try/catch
+- Type assertion `as X` hiding runtime mismatch
+- `undefined` access on optional chaining result used as non-optional
+
+**If DB/ORM files changed (any stack) — DB reviewer:**
+
+Additional checklist:
+- Query result not closed / cursor leak
+- Missing transaction rollback on error path
+- N+1 query pattern introduced
+- Unique constraint not enforced at app level (only in migration)
+- Index missing for new filter/sort introduced in diff
+
+### Step 4 — Consolidate
+
+Merge all subagent reports:
+- Deduplicate by `(file, line)` — keep highest severity, merge bodies
+- Remove findings already caught by `make lint` / linter output
+- Remove "consider adding X" without concrete evidence in the diff
+
+### Step 5 — Report
+
+```markdown
+# Bug audit — <branch> vs <base> — <date>
+
+## Critical — block merge
+- `file.go:42` **nil deref**: `resp.Body` read before nil check after `http.Get` error path.
+  Fix: check `err != nil` before using `resp`.
+
+## High
+- ...
+
+## Medium
+- ...
+
+## Low / nits
+- ...
+
+---
+Findings: <N> total (<critical> critical, <high> high, <medium> medium, <low> low)
+```
+
+Save to `/tmp/<project>-bugs-<short-sha>.md` and print inline.
+
+Final message:
+> "<N> findings. Address with Edit or a dedicated fix subagent."
+
+---
+
+## Constraints
+
+- **Read-only.** No edits, no commits, no `git checkout`.
+- **Cite file:line** for every finding — no location = skip it.
+- **Differentiate certainty**: "definite bug" vs "potential hazard" vs "worth checking".
+- Severity guide:
+
+  | Level | Definition |
+  |-------|-----------|
+  | Critical | Definite crash, data corruption, or security hole in the diff |
+  | High | Likely bug under realistic conditions; resource leak |
+  | Medium | Potential bug; depends on caller contract not visible in diff |
+  | Low | Minor hazard, defensive improvement, nit |
+
+---
+
+## Anti-patterns
+
+- ❌ Generic "consider adding error handling" without showing which call and why.
+- ❌ Severity inflation — not everything is critical.
+- ❌ Reproducing what `make lint` / `go vet` already reports.
+- ❌ Flagging code not present in the diff.
