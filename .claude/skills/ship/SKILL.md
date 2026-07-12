@@ -22,6 +22,7 @@ description: "session-indexer ship pipeline: issue → implement → review → 
   → merge PR             (/ship owns the merge)
   → post comment         (summary: what changed, PR link)
   → close issue
+  → log to /self-learn (if installed)
   → final report
 ```
 
@@ -238,7 +239,28 @@ On failure: warn, ask user to close {ISSUE_URL} manually.
 
 ---
 
-## STEP 6: Final Report
+## STEP 6: Log to /self-learn (if installed)
+
+Skip silently if `.claude/skills/self-learn/` doesn't exist in this project.
+
+`/self-learn log`'s Step 1 is written for interactive human invocation
+("Ask the user: what happened?") — `/ship` runs this step itself, without
+a human in the loop, so do **not** wait for input. Classify and log
+directly using what you already observed during this run, following the
+self-learn LOG step's own field schema and "if the user describes the
+event, classify it yourself" allowance:
+- Smooth run, zero `/fix-review` escalations → **win**
+- `/fix-review` caught something that should have been prevented earlier
+  (wrong pattern, missed edge case, convention violation) → **mistake**
+- STEP 0.5 ambiguity analysis surfaced a decision that would otherwise have
+  produced a wrong implementation → **win**
+
+If the log call fails or `/self-learn` isn't installed, don't block the
+pipeline on it — note it in the final report's Warnings and move on.
+
+---
+
+## STEP 7: Final Report
 
 ```
 ## /ship complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
