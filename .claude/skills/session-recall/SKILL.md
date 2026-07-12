@@ -19,7 +19,7 @@ BM25 keyword fallback. Requires `session-indexer` in PATH and a local
 ## /recall \<query\>
 
 ```bash
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+GCD=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && PROJECT_ROOT=$(dirname "$GCD") || PROJECT_ROOT="$PWD"
 DB="$PROJECT_ROOT/.claude/sessions.db"
 
 if [[ ! -f "$DB" ]]; then
@@ -57,7 +57,7 @@ printf '%s' "$RESULTS" | jq -r '
 ## /recall stats
 
 ```bash
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+GCD=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && PROJECT_ROOT=$(dirname "$GCD") || PROJECT_ROOT="$PWD"
 DB="$PROJECT_ROOT/.claude/sessions.db"
 
 if [[ ! -f "$DB" ]]; then
@@ -95,7 +95,8 @@ automatic BM25 FTS5 fallback when embeddings are absent.
 **Troubleshooting**:
 ```bash
 # Check hook logs
-tail -30 ~/.cache/$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")")/hooks.log
+GCD=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && PROJ=$(basename "$(dirname "$GCD")") || PROJ=$(basename "$PWD")
+tail -30 ~/.cache/"$PROJ"/hooks.log
 
 # Manual index check
 session-indexer stats --db .claude/sessions.db
@@ -115,7 +116,7 @@ history yourself *before* spawning it, then fold the relevant results into
 the subagent's prompt (subagent prompts must be self-contained).
 
 ```bash
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+GCD=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && PROJECT_ROOT=$(dirname "$GCD") || PROJECT_ROOT="$PWD"
 DB="$PROJECT_ROOT/.claude/sessions.db"
 
 [[ -f "$DB" ]] && command -v session-indexer >/dev/null 2>&1 || exit 0

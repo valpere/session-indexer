@@ -322,7 +322,7 @@ INPUT=$(cat)
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 [[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]] && exit 0
 command -v session-indexer >/dev/null 2>&1 || exit 0
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+PROJECT_ROOT=$(hook_project_root)   # main checkout root, even from a worktree
 session-indexer mine "$TRANSCRIPT" --db "$PROJECT_ROOT/.claude/sessions.db"
 ```
 

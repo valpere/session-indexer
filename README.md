@@ -190,7 +190,8 @@ embeddings exist, not for a partial store. Fix: run `session-indexer embed`.
 
 **Read hook logs:**
 ```bash
-tail -40 ~/.cache/$(basename "$(git rev-parse --show-toplevel)")/hooks.log
+GCD=$(git rev-parse --path-format=absolute --git-common-dir) && PROJ=$(basename "$(dirname "$GCD")") || PROJ=$(basename "$PWD")
+tail -40 ~/.cache/"$PROJ"/hooks.log
 ```
 
 **DB size:** scale assumption is <10k chunks (~40MB vectors in memory). No hard

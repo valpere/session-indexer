@@ -8,10 +8,27 @@
 # hooks log separately (session-indexer -> ~/.cache/session-indexer/).
 # Override with HOOK_LOG_DIR.
 
+# Resolves the *main* checkout's root directory, even when invoked from a
+# linked git worktree (Claude Code uses worktrees by default for isolated
+# work). `git rev-parse --show-toplevel` returns the worktree's own path,
+# not the main checkout's — using it here would silently split the
+# per-project DB/log per worktree instead of sharing one across all of
+# them. `--git-common-dir` always resolves to the main checkout's `.git`
+# regardless of worktree; strip the trailing `/.git` to get its parent.
+# Falls back to $PWD outside a git repo.
+hook_project_root() {
+  local common_dir
+  common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "$PWD"
+    return
+  }
+  dirname "$common_dir"
+}
+
 hook_setup_logging() {
   local script_name="$1"
   local project_name
-  project_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")")
+  project_name=$(basename "$(hook_project_root)")
   LOG_DIR="${HOOK_LOG_DIR:-${HOME}/.cache/${project_name}}"
   mkdir -p "$LOG_DIR" && chmod 700 "$LOG_DIR"
   LOG_FILE="$LOG_DIR/hooks.log"

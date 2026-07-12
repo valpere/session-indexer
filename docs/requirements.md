@@ -42,6 +42,9 @@ The tool must find relevant conversation chunks given a natural-language query.
 Each project maintains its own independent index.
 
 - Index lives at `<project-root>/.claude/sessions.db` (gitignored)
+- `<project-root>` resolves to the main checkout, even when invoked from a
+  linked git worktree — so every worktree of the same repo shares one DB
+  instead of each starting a fresh, empty one (see FR-1 note below)
 - Corruption or deletion of one project's DB does not affect any other
 - No shared daemon, no shared port, no shared state
 
@@ -110,7 +113,7 @@ both languages with equivalent quality.
 - SQLite via `modernc.org/sqlite` (pure Go, no CGO)
 - Ollama local: `bge-m3:latest` for embeddings (1024 dims)
 - Claude Code JSONL format: lines of JSON, `type` field discriminates records; `sessionId` field present in each record (used as session_id; fall back to filename stem if absent)
-- Project root detected via `git rev-parse --show-toplevel` or passed explicitly
+- Project root detected via `git rev-parse --path-format=absolute --git-common-dir` (parent of the main checkout's `.git`, stable across worktrees) or passed explicitly
 - JSONL files at `~/.claude/projects/<hash>/<session-id>.jsonl` — may be
   deleted by Claude Code cleanup; must mine at Stop hook time
 

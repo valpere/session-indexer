@@ -17,7 +17,7 @@ if ! command -v session-indexer >/dev/null 2>&1; then
     exit 0
 fi
 
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+PROJECT_ROOT=$(hook_project_root)
 DB="$PROJECT_ROOT/.claude/sessions.db"
 
 if [[ ! -f "$DB" ]]; then
