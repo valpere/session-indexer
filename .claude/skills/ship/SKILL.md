@@ -243,8 +243,12 @@ On failure: warn, ask user to close {ISSUE_URL} manually.
 
 Skip silently if `.claude/skills/self-learn/` doesn't exist in this project.
 
-Log one entry via `/self-learn log`, classified by what actually happened
-this run:
+`/self-learn log`'s Step 1 is written for interactive human invocation
+("Ask the user: what happened?") — `/ship` runs this step itself, without
+a human in the loop, so do **not** wait for input. Classify and log
+directly using what you already observed during this run, following the
+self-learn LOG step's own field schema and "if the user describes the
+event, classify it yourself" allowance:
 - Smooth run, zero `/fix-review` escalations → **win**
 - `/fix-review` caught something that should have been prevented earlier
   (wrong pattern, missed edge case, convention violation) → **mistake**

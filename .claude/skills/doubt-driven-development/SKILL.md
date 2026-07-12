@@ -7,12 +7,13 @@ description: Subjects every non-trivial decision to a fresh-context adversarial 
 # Adversarial Fresh-Context Review, In-Flight
 
 Adapted from [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
-(MIT) — genuinely self-contained, kept close to verbatim. Complements
-`comprehension-gate` (that skill verifies the *human* understands a
-hard-to-reverse action; this one has the *agent* doubt its own non-trivial
-decisions before they stand) and `improve`/`tech-lead` (those are post-hoc
-verdicts on a finished artifact; this is in-flight, while course-correction
-is still cheap).
+(MIT) — genuinely self-contained, kept close to verbatim. Conceptually
+complements `comprehension-gate` (a related skill, not installed in this
+project — it verifies the *human* understands a hard-to-reverse action;
+this one has the *agent* doubt its own non-trivial decisions before they
+stand) and `improve`/`tech-lead` (both installed here — those give
+post-hoc verdicts on a finished artifact; this is in-flight, while
+course-correction is still cheap).
 
 ## Overview
 
@@ -114,7 +115,7 @@ CONTRACT: <paste contract>
 
 **Pass ARTIFACT + CONTRACT only. Do NOT pass the CLAIM.** Handing the reviewer your conclusion biases it toward agreement. The reviewer must independently determine whether the artifact satisfies the contract.
 
-In this library's agents (`~/wrk/common/agents/`), `tech-lead`, `static-analysis`, and `bug-fixer` start with isolated context by design and are usable here — pick whichever's domain matches the artifact.
+In this project's agents (`.claude/agents/`), `tech-lead`, `static-analysis`, and `bug-fixer` start with isolated context by design and are usable here — pick whichever's domain matches the artifact.
 
 **The adversarial prompt above takes precedence over the agent's default response shape.** Agents like `tech-lead` are written to produce balanced verdicts with both strengths and weaknesses; doubt-driven needs issues-only output. Paste the adversarial prompt verbatim into the invocation so it overrides the agent's default. If an agent's response shape can't be overridden cleanly, fall back to a generic subagent with the adversarial prompt.
 

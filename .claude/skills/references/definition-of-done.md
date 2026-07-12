@@ -3,7 +3,7 @@
 Adapted from [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
 (MIT) — stack-neutral as-is, kept close to verbatim.
 
-A standing, project-wide bar that every change must clear before it counts as done. Unlike acceptance criteria, which vary per task and answer "did we build the right thing?", the Definition of Done is the same every time and answers "is this finished to our standard?". Use it as the final gate in `backlog` (task planning), `code-generator`'s pre-flight step, and `ship`.
+A standing, project-wide bar that every change must clear before it counts as done. Unlike acceptance criteria, which vary per task and answer "did we build the right thing?", the Definition of Done is the same every time and answers "is this finished to our standard?". Use it as the final gate in `code-generator`'s pre-flight step and `ship` (this project has no `backlog` task-planning skill).
 
 ## Definition of Done vs. Acceptance Criteria
 
