@@ -44,6 +44,8 @@ vendor/
 # Session recall
 .claude/session-log.md
 .claude/sessions.db
+.claude/sessions.db-shm
+.claude/sessions.db-wal
 
 # Claude Code local-only settings — never commit (per-machine hook wiring)
 .claude/settings.local.json
