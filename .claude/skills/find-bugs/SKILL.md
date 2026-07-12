@@ -19,9 +19,16 @@ prioritized report; user decides what to fix.
 BASE="${1:-main}"
 
 # If on a feature branch: diff vs base
-git rev-parse --verify "$BASE" 2>/dev/null && \
-  DIFF=$(git diff "$BASE"...HEAD) || \
-  DIFF=$(git diff HEAD~10...HEAD)
+if git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+  DIFF=$(git diff "$BASE"...HEAD)
+else
+  if git rev-parse --verify --quiet HEAD~10 >/dev/null; then
+    BASE=HEAD~10
+  else
+    BASE=$(git rev-list --max-parents=0 HEAD | tail -1)
+  fi
+  DIFF=$(git diff "$BASE"...HEAD)
+fi
 
 # Fallback: on main with no base arg → recent commits
 if [[ -z "$DIFF" ]]; then
@@ -43,10 +50,7 @@ cat .claude/context-essentials.md 2>/dev/null
 
 # Detect stack
 cat go.mod 2>/dev/null | head -3
-cat package.json 2>/dev/null | python3 -c "
-import sys,json; d=json.load(sys.stdin)
-print({**d.get('dependencies',{}), **d.get('devDependencies',{})}.keys())
-" 2>/dev/null
+cat package.json 2>/dev/null | jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys | join(", ")' 2>/dev/null
 
 # Changed files by type
 git diff "$BASE"...HEAD --name-only | sort
