@@ -30,5 +30,6 @@ echo "[$(date -Iseconds)] session-index: mining $(basename "$TRANSCRIPT") → $D
 if session-indexer mine "$TRANSCRIPT" --db "$DB" >> "$LOG_FILE" 2>&1; then
     echo "[$(date -Iseconds)] session-index: done" >> "$LOG_FILE"
 else
-    echo "[$(date -Iseconds)] session-index: session-indexer exited $?" >> "$LOG_FILE"
+    MINE_EXIT=$?
+    echo "[$(date -Iseconds)] session-index: session-indexer exited $MINE_EXIT" >> "$LOG_FILE"
 fi
