@@ -270,7 +270,10 @@ session-indexer/
 │   ├── requirements.md
 │   ├── use-cases.md
 │   └── architecture.md
-├── .claude/                   — LOCAL ONLY (gitignored, not committed)
+├── .claude/                   — tracked (agents/, hooks/, skills/); only
+│   │                            sessions.db, session-log.md, settings.local.json,
+│   │                            and telemetry.jsonl are gitignored (per-machine
+│   │                            state, see .gitignore)
 │   │                            Canonical source: ~/wrk/common/skills/session-recall/
 │   ├── hooks/
 │   │   ├── session-end.sh    — Stop: LLM summary → session-log.md

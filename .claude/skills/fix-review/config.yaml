@@ -1,0 +1,108 @@
+# fix-review multi-model configuration — session-indexer
+#
+# Only one provider is wired: Ollama. The skill drives three reviewer
+# rounds, each with a different model family on either Ollama Cloud
+# (preferred — `:cloud` models, free tier) or local Ollama.
+#
+# OpenRouter was the prior default but was removed 2026-05-30 — the
+# provider went pay-only and Ollama Cloud now covers the same niche
+# with a free tier and shares our existing ollama.go client.
+
+provider: ollama
+
+# Reviewer model set. `ollama_cloud` is the default; switch reviewers
+# section by editing the matching block, not by adding a new provider.
+reviewers:
+  ollama_cloud:
+    # Per-round `think` (optional, default true): when set to false, sends
+    # `think: false` in the native /api/chat payload to suppress the
+    # thinking phase on reasoning models. Saves 80-90% of completion
+    # tokens at the cost of finding fewer issues — useful for the fast
+    # diversity-only models on smaller diffs.
+    round_1:
+      model: deepseek-v4-flash:cloud      # DeepSeek thinking — primary deliberation
+      think: true
+    round_2:
+      model: glm-5.2:cloud                # Zhiyu AI thinking — SWE-Bench Pro SOTA, family diversity
+      think: true
+    round_3:
+      model: gemma4:31b-cloud             # Google thinking-capable, run with think:false here — different family for arch diversity
+      think: false
+    # Alternatives (rotate in if a primary stops responding well):
+    #   kimi-k2.7-code:cloud       — Moonshot, deeper deliberation but ~6× slower
+    #   deepseek-v3.2:cloud        — 671B sparse-attn, GPT-5-class reasoning
+    #   glm-5.1:cloud              — SWE-Bench Pro SOTA reasoning (superseded by glm-5.2)
+    #   nemotron-3-ultra:cloud     — high-throughput reasoning, long-running agent workflows
+    #   devstral-small-2:24b-cloud — fast SWE-Bench specialist
+    #   kimi-k2.6:cloud            — long-horizon coding, multimodal
+    #   qwen3-coder-next:cloud     — DO NOT USE with think:false; outputs [] in 2 tokens without reviewing
+
+  ollama_local:
+    round_1:
+      model: granite3.3:8b      # local, no subscription needed
+    round_2:
+      model: qwen2.5-coder:7b   # local, no subscription needed
+    round_3:
+      model: granite3.3:8b      # local, no subscription needed
+
+  # CLI failover tier — engaged automatically when Ollama Cloud probe fails
+  # (401 invalid key, 429 quota exceeded, network error). Each agent is
+  # invoked in parallel (independent processes — no shared-engine
+  # bottleneck). The review prompt is piped to stdin; stdout is captured
+  # as the response. Non-JSON output or non-zero exit → 0 findings for
+  # that round (the whole run still proceeds). Per-agent timeout: 300s.
+  cli:
+    - { name: opencode,     cmd: "sh -c 'opencode run -m opencode/nemotron-3-super-free --format json \"$(cat)\"'" }
+    - { name: gemini,       cmd: "gemini --model gemini-2.5-flash-lite" }
+    - { name: codex,        cmd: "codex --dangerously-bypass-approvals-and-sandbox review -" }
+    - { name: cursor-agent, cmd: "cursor-agent --model auto" }
+    - { name: kilo,         cmd: "sh -c 'kilo run \"$(cat)\"'" }
+    - { name: agy,          cmd: "agy --print --model 'GPT-OSS 120B (Medium)' --dangerously-skip-permissions" }
+
+# ---------------------------------------------------------------------------
+# Reviewer set (which reviewers.* block above to load)
+# ---------------------------------------------------------------------------
+# cloud  — use reviewers.ollama_cloud (requires OLLAMA_API_KEY)
+# local  — use reviewers.ollama_local (requires running `ollama serve`)
+reviewer_set: cloud
+
+# ---------------------------------------------------------------------------
+# API endpoint
+# ---------------------------------------------------------------------------
+# Cloud:  https://ollama.com/api/chat  (Bearer auth via OLLAMA_API_KEY)
+# Local:  http://localhost:11434/api/chat  (no auth)
+# Native /api/chat endpoint — required for per-round `think: false`
+# support (the OpenAI-compat /v1/chat/completions silently ignores the
+# `think` param on Ollama Cloud).
+ollama_api_url: https://ollama.com/api/chat
+ollama_api_url_local: http://localhost:11434/api/chat
+
+# ---------------------------------------------------------------------------
+# Arbiter (Round 4 — always)
+# After all model rounds, Claude itself acts as Arbiter:
+#   - Reviews the full PR diff with all prior findings in context
+#   - Confirms, escalates, or dismisses each still-open item
+#   - Adds any issues the models missed
+#   - Applies fixes, commits, then pushes
+# No API call — Claude is the Arbiter. Merge is owned by /ship, not /fix-review.
+# ---------------------------------------------------------------------------
+
+arbiter: claude   # do not change
+
+# ---------------------------------------------------------------------------
+# Behaviour flags
+# ---------------------------------------------------------------------------
+
+# diff_scope controls what rounds 2-3 see (round 1 always uses full PR diff):
+#   delta — only the changes introduced in the previous round's commit (git diff HEAD~1)
+#   full  — entire PR diff since the branch was cut (git diff <merge-base>...HEAD)
+diff_scope: delta
+
+# Post a collapsible PR comment after each LLM round summarising what was found.
+post_summary_to_pr: true
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+telemetry_enabled: true
+telemetry_file: .claude/skills/fix-review/telemetry.jsonl

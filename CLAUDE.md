@@ -85,3 +85,14 @@ Primary: embed query → exhaustive cosine over all `embeddings` rows loaded int
 `.claude/settings.local.json` wires two Stop-hook commands into a single `Stop` entry: `bash .claude/hooks/session-end.sh` (writes `session-log.md`) and `bash .claude/hooks/session-index.sh` (runs `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db`). The hook fires with JSON on stdin containing `transcript_path` and `session_id`. JSONL files may be deleted by Claude Code cleanup shortly after — mine at hook time. The `session-index.sh` guard silently no-ops until `session-indexer` is on `PATH`.
 
 > Note: in Claude Code 2.1.x, multiple **top-level** `Stop` array entries are not all fired — only the first runs. Put multiple Stop commands in the **same** entry's `hooks` array (the structure used here).
+
+## Before Any Commit on a Feature/Chore Branch
+
+There is no dedicated "commit" skill in this project — ad hoc commit
+requests bypass `/ship`'s structural freshness check (it always branches
+from an updated `main`). Before committing directly onto the current
+branch:
+
+1. Check whether the current branch already has a merged PR: `gh pr list --state merged --search "head:<branch-name>"`.
+2. If yes, the branch is stale — do **not** commit onto it. Instead: `git checkout main && git pull --ff-only && git checkout -b <new-branch-name>` before making any new commit.
+3. If the current branch has no merged PR yet (still open, or never pushed), committing onto it is fine as-is.
