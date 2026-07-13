@@ -285,7 +285,7 @@ session-indexer/
 │   │   └── session-recall/SKILL.md  — /recall <query> skill + orchestrator subagent-prep section
 │   └── settings.local.json
 ├── .gitignore
-├── go.mod                   — go 1.26
+├── go.mod                   — go 1.26.5
 └── Makefile
 ```
 
