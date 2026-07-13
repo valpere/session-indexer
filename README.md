@@ -12,6 +12,12 @@ at session start.
 gives you "where I left off last time"; `session-indexer` gives you "what we
 discussed across all history" — by semantic similarity, not grep.
 
+**Scope: single developer, single machine.** This indexes *your own*
+individual sessions with Claude Code in a project — not a team's shared
+history, not a multi-user store. If you need to share findings with
+teammates, that's a conversation/PR/doc, not something this tool does.
+See below for why that's a deliberate choice, not a limitation.
+
 **Why not a centralised memory tool?**
 [mempalace](https://github.com/MemPalace/mempalace),
 [agentmemory](https://github.com/rohitg00/agentmemory), and
@@ -163,6 +169,44 @@ Two Stop hooks run on every session end (wired in a single `Stop` entry of
 `session-recall.sh` no-ops until `.claude/sessions.db` exists (after the first indexed session).
 
 Hook logs go to `~/.cache/<project-name>/hooks.log`.
+
+## FAQ
+
+**Why isn't `.claude/sessions.db` committed to the repo? Won't I lose it?**
+
+`.claude/sessions.db` is gitignored on purpose. Two independent reasons come
+up when people ask this, and it's worth separating them:
+
+- *"Should the whole team see this DB?"* — No. `session-indexer` indexes
+  your own individual sessions with Claude Code, not a team-shared history
+  (see "Scope" above). Committing it to the project repo would put one
+  person's session log in front of every collaborator on every PR, for no
+  benefit — nobody else's Claude Code instance reads or needs it. Adding
+  it to git also means merge conflicts on every commit touching the DB,
+  since SQLite files aren't line-mergeable.
+- *"But what if I lose the machine / disk?"* — That's a real, separate
+  concern: backup, not team sharing. The DB is fully rebuildable from your
+  local JSONL transcripts (`session-indexer mine` is idempotent — see
+  UC-8 in [`docs/use-cases.md`](docs/use-cases.md)), so the worst case is
+  re-mining, not permanent loss, as long as the transcripts themselves
+  survive. If you want the DB backed up beyond that, the right place is
+  your own personal dotfiles/backup tooling (e.g. a private dotfiles repo,
+  Time Machine, restic) — *not* the project repo, since that would
+  reintroduce the team-visibility and merge-conflict problems above for a
+  file only you need. Whether to back it up at all is entirely your call;
+  the tool takes no position on it beyond keeping it out of the shared repo.
+
+**What about git worktrees — does each worktree get its own DB?**
+
+Currently, yes: `.claude/sessions.db` resolves relative to whichever
+checkout Claude Code is running from, and Claude Code uses linked git
+worktrees by default for isolated work. Since `.claude/sessions.db` is
+gitignored, a linked worktree doesn't see the main checkout's existing DB
+and starts indexing independently, splitting your session history across
+worktrees rather than sharing it. This is a known limitation, not
+intentional design (per-project isolation is intentional — see
+[`docs/requirements.md`](docs/requirements.md) FR-3 — worktree splitting
+within one project isn't). If this affects your workflow, open an issue.
 
 ## Troubleshooting
 
