@@ -56,6 +56,10 @@ vendor/
 # Skills telemetry
 .claude/skills/fix-review/telemetry.jsonl
 
+# Self-learn accumulated state — per-machine log, not shared skill config
+.claude/skills/self-learn/_patterns/
+.claude/skills/self-learn/_knowledge-base/
+
 # SDD scratch — implementation plans written by writing-plans skill
 docs/superpowers/
 
