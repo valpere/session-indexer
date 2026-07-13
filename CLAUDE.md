@@ -75,7 +75,7 @@ Primary: embed query → exhaustive cosine over all `embeddings` rows loaded int
 ## Key Constraints
 
 - **Pure Go, no CGO.** `go build` must produce a portable static binary.
-- **Go 1.26+.** Use `go 1.26` in `go.mod`.
+- **Go 1.26.5+.** Use `go 1.26.5` in `go.mod` (patch-pinned — `1.26.4` had GO-2026-5856, a `crypto/tls` ECH privacy leak fixed in `1.26.5`; see issue #31).
 - **60-second budget.** `mine` runs inside a Claude Code Stop hook. Must complete well within 60s (enforced internally via a 50s `context.Context` deadline — see Embeddings).
 - **Mixed Ukrainian + English content.** `bge-m3` handles both; `unicode61 remove_diacritics 0` tokenizer for FTS5.
 - **Per-project isolation.** No cross-project search, no shared state.
