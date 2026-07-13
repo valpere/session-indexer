@@ -14,12 +14,9 @@ discussed across all history" — by semantic similarity, not grep.
 
 **Scope: single developer, single machine.** This indexes *your own*
 individual sessions with Claude Code in a project — not a team's shared
-history, not a multi-user store. mempalace, agentmemory, and MemMachine
-(below) also index individual developer↔agent sessions, not team memory —
-but they route that individual history through a shared/external backend.
-`session-indexer` keeps it local instead. If you need to share findings
-with teammates, that's a conversation/PR/doc, not something this tool
-does — see the FAQ below for more on this design choice.
+history, not a multi-user store. If you need to share findings with
+teammates, that's a conversation/PR/doc, not something this tool does.
+See below for why that's a deliberate choice, not a limitation.
 
 **Why not a centralised memory tool?**
 [mempalace](https://github.com/MemPalace/mempalace),
