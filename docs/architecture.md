@@ -4,15 +4,21 @@
 
 ## Overview
 
-A single Go binary with four subcommands. No daemon, no server, no shared
-state between projects.
+A single Go binary with six subcommands (`facts` has four child verbs). No
+daemon, no server, no shared state between projects.
 
 ```
 session-indexer
 ├── mine    — parse JSONL → index into SQLite (chunks + embeddings)
 ├── embed   — backfill embeddings for chunks that lack them
 ├── search  — embedding-first cosine; FTS5 fallback when Ollama unavailable
-└── stats   — report index state
+├── stats   — report index state
+├── distill — extract structured facts from mined chunks (LLM, manual)
+└── facts   — query the distilled facts layer
+    ├── search     — FTS5 keyword search
+    ├── get        — one fact + supersedes edges
+    ├── related    — depth-1 supersedes neighbors
+    └── supersede  — manual tombstone (audit/override backstop)
 ```
 
 ---
@@ -64,7 +70,7 @@ CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
--- populated on DB creation: INSERT INTO meta VALUES ('schema_version', '1');
+-- populated on DB creation: INSERT INTO meta VALUES ('schema_version', '2');
 
 CREATE TABLE chunks (
     id            INTEGER PRIMARY KEY,
@@ -102,6 +108,46 @@ CREATE TABLE embeddings (
 -- Dedup key: positional within session, stable across re-mines
 CREATE UNIQUE INDEX idx_chunks_dedup
     ON chunks(session_id, message_index, chunk_index);
+
+-- Distilled facts: flat subject-predicate-object triples. No per-type node
+-- tables, no separate edges table — supersedes is the only relation and is
+-- functional/at-most-one, so a self-referential superseded_by column
+-- captures it fully.
+CREATE TABLE facts (
+    id              INTEGER PRIMARY KEY,
+    subject         TEXT    NOT NULL,
+    predicate       TEXT    NOT NULL,
+    object          TEXT    NOT NULL,
+    confidence      REAL    NOT NULL,
+    source_chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
+    session_date    TEXT    NOT NULL,   -- denormalized from source chunk
+    created_at      TEXT    NOT NULL,   -- distilled-at
+    until           TEXT,               -- tombstone; NULL = currently valid
+    superseded_by   INTEGER REFERENCES facts(id) ON DELETE SET NULL
+);
+
+-- FTS5 mirrors chunks_fts exactly (same tokenizer, same trigger shape)
+CREATE VIRTUAL TABLE facts_fts USING fts5(
+    subject, predicate, object,
+    content='facts', content_rowid='id',
+    tokenize="unicode61 remove_diacritics 0"
+);
+CREATE TRIGGER facts_ai AFTER INSERT ON facts BEGIN
+    INSERT INTO facts_fts(rowid, subject, predicate, object)
+    VALUES (new.id, new.subject, new.predicate, new.object);
+END;
+CREATE TRIGGER facts_ad AFTER DELETE ON facts BEGIN
+    INSERT INTO facts_fts(facts_fts, rowid, subject, predicate, object)
+    VALUES ('delete', old.id, old.subject, old.predicate, old.object);
+END;
+
+-- Distill progress marker, decoupled from produced facts — a chunk
+-- legitimately yields zero facts, so "has a facts row" can't double as
+-- the pending marker (that would re-distill zero-fact chunks forever).
+CREATE TABLE distilled_chunks (
+    chunk_id     INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+    distilled_at TEXT NOT NULL
+);
 ```
 
 On DB open:
@@ -247,6 +293,122 @@ The config validation approach using JSON Schema has a key advantage...
 
 ---
 
+## Facts Layer
+
+A distilled, structured layer of subject-predicate-object claims sitting
+alongside the raw-text `search`. Ported (scoped down) from litopys — see
+"Explicitly out of scope" in `docs/requirements.md` for what was
+deliberately left out. Closes a gap raw-text search cannot: a stale fact
+about a project (e.g. "implementation not started") surfaces only during
+periodic review unless something distills and tombstones it at index time.
+
+### Distill flow
+
+```
+session-indexer distill --db <path> [--threshold 0.7]
+    │
+    └─ for each chunk in ChunksWithoutFacts (distilled_chunks marker):
+         │
+         ├─ CurrentFacts(limit=ContextCap) — bounded context of
+         │  non-tombstoned facts, fed to the model for supersession judgment
+         │
+         ├─ POST /api/generate  { model: OLLAMA_DISTILL_MODEL, chunk, existing facts }
+         │  → candidates: [{subject, predicate, object, confidence, supersedes_ids}]
+         │
+         ├─ per candidate:
+         │    confidence < threshold?  → discard (BelowThreshold++)
+         │    else → InsertFact; for each supersedes_ids entry validated
+         │           against the context actually given → SupersedeFact
+         │
+         └─ MarkChunkDistilled — regardless of fact count (zero-fact chunks
+            must not be re-distilled forever)
+```
+
+`distill` is a separate, manually-invoked subcommand — it never hooks into
+`mine`'s two-phase run or its 50s Stop-hook deadline. `context.Background()`
+governs each chunk's `Distill` call internally.
+
+### Confidence gate — a deliberate deviation from litopys
+
+The gate (default 0.7) is a **deterministic Go check**
+(`internal/distill.Run`), not an LLM-enforced instruction. litopys's
+equivalent 0.7 threshold is instructional/human-reviewed, backed by a
+quarantine-and-promote workflow. session-indexer has no such review loop
+(the existing `dreaming`/`apply-dreaming` cycle already covers that role),
+so the model's self-reported confidence is treated as advisory input to a
+hard code-level check, not the enforcement mechanism itself.
+
+### Supersession — automatic, with a manual backstop
+
+The distill call judges supersession automatically, given the bounded
+`CurrentFacts` context. This is a deliberate deviation from litopys, which
+has no automated supersession at all — only explicit human/agent
+`litopys_link` calls. A purely-manual approach (litopys's model) just
+relocates the same review burden this feature exists to remove; a
+deterministic same-subject-different-object heuristic produces false
+positives on paraphrase and misses genuine contradictions phrased
+differently — exactly the language problem an LLM call is already solving
+mid-chunk.
+
+Safeguards:
+- The model may only cite fact ids from the context it was actually given
+  (`Run` validates every `supersedes_ids` entry against the provided set —
+  `TestRunRejectsSupersedeIDOutsideContext` covers this)
+- The superseding fact must itself pass the confidence gate before it's
+  inserted
+- `SupersedeFact` only tombstones a fact whose `until IS NULL` — a no-op
+  (not an error) if already tombstoned, so re-application is safe
+- Every auto-supersession is reversible/auditable via the preserved
+  `superseded_by` edge; `facts supersede <new> <old>` exists as a manual
+  audit/override backstop using the same `SupersedeFact` function
+
+If the current-facts set exceeds `ContextCap` (200), the distill call omits
+context entirely for that chunk and auto-supersession is skipped for it —
+an oversized context blows the prompt budget and the model has nothing
+reliable to judge supersession against.
+
+### Tombstone / supersedes resolution
+
+Filter-based, not chain-walking — the one litopys algorithm ported
+near-verbatim. `facts search` and `stats`'s current-facts count both filter
+on `WHERE until IS NULL`; there is no recursive walk of `superseded_by`
+chains. `facts get <id>` and `facts related <id>` are depth-1 only:
+`incoming` (facts whose `superseded_by = id`) and `outgoing` (what `id`'s
+own `superseded_by` points to, if any). No BFS, no multi-hop traversal —
+YAGNI until a real need surfaces (see requirements.md's Out of Scope).
+
+### Distill model
+
+Ollama REST call:
+```
+POST http://localhost:11434/api/generate   (default; override with OLLAMA_HOST)
+{
+  "model": "qwen2.5:latest",   (default; override with OLLAMA_DISTILL_MODEL —
+                                 a chat/generate model, distinct from
+                                 bge-m3:latest; must be pulled separately)
+  "prompt": "<template with CURRENT KNOWN FACTS + CHUNK>",
+  "stream": false,
+  "format": "json"
+}
+→ { "response": "{\"facts\":[...]}" }
+```
+
+120s HTTP client timeout (vs embed's 30s) — generate is a larger completion
+than a single embedding vector. Single attempt, no retry — matches embed's
+documented no-retry convention; a failed chunk is left un-distilled
+(`Failed++`, not marked in `distilled_chunks`) and retried on the next run.
+
+Availability probe is the identical `GET /api/tags` (2s timeout) pattern
+used by `embed` — if the configured `OLLAMA_DISTILL_MODEL` isn't in the tag
+list, `distill` fails gracefully with `ollama unavailable — start it and
+pull the distill model (OLLAMA_DISTILL_MODEL)`, matching NFR-1.
+
+### Changelog
+
+**2026-07-18** — Added the facts layer (`distill`, `facts search/get/related/supersede`), `SchemaVersion` "1" → "2". Existing DBs must be deleted and re-mined (no migration framework, by design — see NFR-2).
+
+---
+
 ## File Layout
 
 ```
@@ -264,8 +426,12 @@ session-indexer/
 │   │   └── chunk.go         — []Message → []Chunk (split, filter, truncate)
 │   ├── embed/
 │   │   └── embed.go         — Ollama client, probe+model-check, float32 BLOB
-│   └── search/
-│       └── search.go        — exhaustive cosine; FTS5 fallback
+│   ├── search/
+│   │   └── search.go        — exhaustive cosine; FTS5 fallback; Stats
+│   ├── distill/
+│   │   └── distill.go       — Ollama generate client + orchestration (confidence gate, supersession)
+│   └── facts/
+│       └── facts.go         — read verbs: search (FTS5), get, related
 ├── docs/
 │   ├── requirements.md
 │   ├── use-cases.md

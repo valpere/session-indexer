@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,108 @@ func TestInsertEmbeddingAndPendingList(t *testing.T) {
 	pending, _ = ChunksWithoutEmbeddings(d)
 	if len(pending) != 0 {
 		t.Fatalf("pending after = %d, want 0", len(pending))
+	}
+}
+
+func TestInsertFactAndCurrentFacts(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	id, err := InsertFact(d, internal.Fact{
+		Subject: "session-indexer", Predicate: "has", Object: "33 merged PRs",
+		Confidence: 0.9, SessionDate: "2026-07-01", CreatedAt: "2026-07-01T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("InsertFact: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("InsertFact returned id 0")
+	}
+	current, err := CurrentFacts(d, 10)
+	if err != nil {
+		t.Fatalf("CurrentFacts: %v", err)
+	}
+	if len(current) != 1 || current[0].ID != id {
+		t.Fatalf("CurrentFacts = %+v, want one fact with id %d", current, id)
+	}
+	if current[0].Until != nil {
+		t.Fatalf("Until = %v, want nil (currently valid)", *current[0].Until)
+	}
+}
+
+func TestChunksWithoutFactsExcludesDistilled(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-07-01", Role: "user",
+		MessageIndex: 0, ChunkIndex: 0, Content: "a chunk with nothing extractable", CreatedAt: "2026-07-01T10:00:00Z"}
+	id, _, _ := InsertChunk(d, c)
+	pending, err := ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending before = %+v err=%v, want 1", pending, err)
+	}
+	// Mark distilled with zero facts produced — must still drop from pending.
+	if err := MarkChunkDistilled(d, id, "2026-07-01T10:05:00Z"); err != nil {
+		t.Fatalf("MarkChunkDistilled: %v", err)
+	}
+	pending, err = ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after = %+v err=%v, want none (zero-fact chunk must not stay pending)", pending, err)
+	}
+}
+
+func TestSupersedeFactStampsUntilAndEdge(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	oldID, _ := InsertFact(d, internal.Fact{Subject: "project", Predicate: "status", Object: "not started",
+		Confidence: 0.9, SessionDate: "2026-07-01", CreatedAt: "2026-07-01T10:00:00Z"})
+	newID, _ := InsertFact(d, internal.Fact{Subject: "project", Predicate: "status", Object: "in progress",
+		Confidence: 0.9, SessionDate: "2026-07-02", CreatedAt: "2026-07-02T10:00:00Z"})
+	changed, err := SupersedeFact(d, newID, oldID, "2026-07-02T10:00:00Z")
+	if err != nil {
+		t.Fatalf("SupersedeFact: %v", err)
+	}
+	if !changed {
+		t.Fatal("SupersedeFact reported changed=false, want true")
+	}
+	var until sql.NullString
+	var supersededBy sql.NullInt64
+	if err := d.QueryRow(`SELECT until, superseded_by FROM facts WHERE id=?`, oldID).
+		Scan(&until, &supersededBy); err != nil {
+		t.Fatalf("read supersede state: %v", err)
+	}
+	if !until.Valid || until.String != "2026-07-02T10:00:00Z" {
+		t.Fatalf("until = %+v, want stamped timestamp", until)
+	}
+	if !supersededBy.Valid || supersededBy.Int64 != newID {
+		t.Fatalf("superseded_by = %+v, want %d", supersededBy, newID)
+	}
+}
+
+func TestSupersedeFactNoOpWhenAlreadyTombstoned(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	oldID, _ := InsertFact(d, internal.Fact{Subject: "s", Predicate: "p", Object: "o1",
+		Confidence: 0.9, SessionDate: "2026-07-01", CreatedAt: "2026-07-01T10:00:00Z"})
+	newID, _ := InsertFact(d, internal.Fact{Subject: "s", Predicate: "p", Object: "o2",
+		Confidence: 0.9, SessionDate: "2026-07-02", CreatedAt: "2026-07-02T10:00:00Z"})
+	otherID, _ := InsertFact(d, internal.Fact{Subject: "s", Predicate: "p", Object: "o3",
+		Confidence: 0.9, SessionDate: "2026-07-03", CreatedAt: "2026-07-03T10:00:00Z"})
+
+	if changed, err := SupersedeFact(d, newID, oldID, "2026-07-02T10:00:00Z"); err != nil || !changed {
+		t.Fatalf("first supersede: changed=%v err=%v, want true/nil", changed, err)
+	}
+	// Attempt to re-tombstone the same fact via a different superseder — no-op.
+	changed, err := SupersedeFact(d, otherID, oldID, "2026-07-03T10:00:00Z")
+	if err != nil {
+		t.Fatalf("second supersede: %v", err)
+	}
+	if changed {
+		t.Fatal("SupersedeFact on an already-tombstoned fact reported changed=true, want false (no-op)")
+	}
+	var supersededBy sql.NullInt64
+	if err := d.QueryRow(`SELECT superseded_by FROM facts WHERE id=?`, oldID).Scan(&supersededBy); err != nil {
+		t.Fatalf("read superseded_by: %v", err)
+	}
+	if !supersededBy.Valid || supersededBy.Int64 != newID {
+		t.Fatalf("superseded_by = %+v, want unchanged at %d (first supersede wins)", supersededBy, newID)
 	}
 }

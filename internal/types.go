@@ -19,3 +19,18 @@ type SearchResult struct {
 	Content     string
 	Score       float64 // cosine similarity, or BM25 (negated) in fallback
 }
+
+// Fact is one distilled subject-predicate-object claim, optionally
+// tombstoned by a newer fact that supersedes it.
+type Fact struct {
+	ID            int64
+	Subject       string
+	Predicate     string
+	Object        string
+	Confidence    float64
+	SourceChunkID int64
+	SessionDate   string
+	CreatedAt     string  // RFC3339, distilled-at
+	Until         *string // tombstone timestamp; nil = currently valid
+	SupersededBy  *int64  // id of the fact that superseded this one
+}

@@ -23,22 +23,24 @@ Raw `go` invocations still work if you don't want to use make:
 
 ## Architecture
 
-Single Go binary, no daemon, no shared state between projects. Four subcommands via Cobra:
+Single Go binary, no daemon, no shared state between projects. Six subcommands via Cobra (`facts` has four child verbs):
 
 ```
-session-indexer mine   <jsonl-path> --db <path>        # parse JSONL → SQLite
-session-indexer search <query>      --db <path> [--limit N] [--json]
-session-indexer embed               --db <path>        # backfill missing embeddings
-session-indexer stats               --db <path>        # sessions, chunks, pending, DB size
+session-indexer mine    <jsonl-path> --db <path>        # parse JSONL → SQLite
+session-indexer search  <query>      --db <path> [--limit N] [--json]
+session-indexer embed                --db <path>        # backfill missing embeddings
+session-indexer stats                --db <path>        # sessions, chunks, facts, pending, DB size
+session-indexer distill              --db <path> [--threshold 0.7]   # LLM-extract facts, manual, no deadline
+session-indexer facts search/get/related/supersede --db <path>       # query the facts layer
 ```
 
 ### File Layout
 
 ```
 cmd/session-indexer/main.go       — Cobra root + subcommands
-internal/types.go                 — shared row types: Chunk, SearchResult
+internal/types.go                 — shared row types: Chunk, SearchResult, Fact
 internal/db/
-  db.go                           — open, WAL, busy_timeout, schema version check
+  db.go                           — open, WAL, busy_timeout, schema version check; fact CRUD
   schema.sql                      — embedded via go:embed
 internal/mine/
   mine.go                         — orchestrate: parse → chunk → store → embed (two-phase: store first, embed respects ctx deadline; deferred chunks backfilled via `embed`). Defines `mine.Result` (ChunksInserted / Embedded / Skipped / Deferred).
@@ -47,7 +49,11 @@ internal/mine/
 internal/embed/
   embed.go                        — Ollama client, probe+model-check, float32 BLOB
 internal/search/
-  search.go                       — exhaustive cosine; FTS5 BM25 fallback
+  search.go                       — exhaustive cosine; FTS5 BM25 fallback; Stats
+internal/distill/
+  distill.go                      — Ollama generate client + orchestration: confidence gate (deterministic Go check, not LLM-enforced), automatic supersession with a validated-against-context safeguard
+internal/facts/
+  facts.go                        — read verbs: Search (FTS5 BM25), Get (supersedes edges), Related (depth-1)
 ```
 
 ### Storage
@@ -71,6 +77,14 @@ Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims)
 ### Search
 
 Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Scale assumption: <10k chunks. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
+
+### Facts Layer
+
+Distilled subject-predicate-object claims, separate from raw-text `search`. `distill` (manual, never hooked into `mine`/Stop-hook budget — `context.Background()`, 120s HTTP timeout) calls Ollama `/api/generate` (`OLLAMA_DISTILL_MODEL`, default `qwen2.5:latest`) per chunk not yet in `distilled_chunks`, feeding it a bounded `CurrentFacts` context (cap 200) for supersession judgment.
+
+Confidence gate is a **deterministic Go check** (default 0.7), not an LLM-enforced instruction — the model's self-reported confidence is advisory input only. Supersession is judged automatically by the model, but the model may only cite fact ids from the context it was actually given (validated in Go); `SupersedeFact` no-ops (not an error) on an already-tombstoned fact. `facts supersede <new> <old>` is a manual audit/override backstop using the same function. See `docs/architecture.md`'s "Facts Layer" section for the full design rationale (deliberate deviations from litopys).
+
+Tombstone resolution is filter-based (`WHERE until IS NULL`), not chain-walking. `facts get`/`facts related` are depth-1 only — no BFS.
 
 ## Key Constraints
 

@@ -56,16 +56,46 @@ A Stop hook calls `session-indexer mine` before Claude Code closes the JSONL.
 ### FR-5: CLI interface
 
 ```
-session-indexer mine   <jsonl-path> --db <path>
-session-indexer search <query>      --db <path> [--limit N] [--json]
-session-indexer embed               --db <path>
-session-indexer stats               --db <path>
+session-indexer mine    <jsonl-path> --db <path>
+session-indexer search  <query>      --db <path> [--limit N] [--json]
+session-indexer embed                --db <path>
+session-indexer stats                --db <path>
+session-indexer distill              --db <path> [--threshold N]
+session-indexer facts search   <query>          --db <path> [--limit N] [--json] [--include-expired]
+session-indexer facts get      <id>             --db <path> [--json]
+session-indexer facts related  <id>             --db <path> [--json]
+session-indexer facts supersede <new-id> <old-id> --db <path>
 ```
 
 - `mine`: parse JSONL → insert chunks + generate embeddings. Idempotent.
 - `search`: embedding-first cosine (FTS5 fallback when Ollama unavailable). `--limit` default 5. `--json` for machine-readable output.
 - `embed`: backfill embeddings for chunks missing them (run after Ollama comes back online).
-- `stats`: report index state (sessions, chunks, pending embeddings, DB size).
+- `stats`: report index state (sessions, chunks, pending embeddings, current facts, pending distill, DB size).
+- `distill`: extract structured facts from mined chunks via an LLM call (see FR-6). `--threshold` default 0.7.
+- `facts search/get/related/supersede`: query and manually correct the distilled facts layer (see FR-7).
+
+### FR-6: Distill facts
+
+The tool must extract atomic subject-predicate-object facts from mined
+chunks via a manually-invoked LLM call, judging supersession against a
+bounded context of currently-valid facts about the same project.
+
+- Source: chunks not yet processed by `distill` (`distilled_chunks` progress marker, decoupled from produced facts — a chunk legitimately yields zero facts)
+- Extraction: a single Ollama `/api/generate` call per pending chunk, given the chunk plus a bounded set of current facts for supersession judgment
+- Confidence gate: a deterministic Go check (default threshold 0.7) against the model's self-reported confidence — advisory input to a hard check, not an LLM-enforced instruction
+- Supersession: judged automatically by the distill call; the model may only cite fact ids from the context it was given (validated in Go); a manual `facts supersede` command exists as an audit/override backstop
+- Idempotent: re-running `distill` skips chunks already marked, regardless of whether they produced facts
+- `distill` is a separate, manually-invoked subcommand — never hooks into `mine`'s two-phase run or its 50s deadline (see NFR-4)
+
+### FR-7: Query facts
+
+The tool must support read verbs over the distilled facts layer, and a
+manual override for supersession.
+
+- `facts search <query>`: FTS5 BM25 keyword search over `subject`/`predicate`/`object`; excludes tombstoned facts unless `--include-expired`
+- `facts get <id>`: a single fact plus its supersedes edges (incoming: older facts this one replaced; outgoing: the fact that replaced this one, if any)
+- `facts related <id>`: depth-1 union of incoming/outgoing supersedes neighbors — no BFS/deeper traversal in v1
+- `facts supersede <new-id> <old-id>`: manually tombstone `old-id` in favor of `new-id`; no-op (not an error) if `old-id` is already tombstoned
 
 ---
 
@@ -96,6 +126,7 @@ library dependencies. `go build` produces a portable binary.
 
 - `mine`: index one session in <30s on CPU (embedding 100 chunks via Ollama); must complete within 60s Stop hook timeout. Enforced internally via a 50s `context.Context` deadline. The mine run is split into two phases: (1) storing every chunk (fast, idempotent), then (2) embedding new chunks under the deadline. Chunks past the deadline are stored but flagged `Deferred` in `mine.Result` and left without an embedding row — backfill with `session-indexer embed`. Embed errors never abort a mine (counted as `Skipped`).
 - `search`: return results in <2s (FTS5 fallback), <5s (embedding cosine path). The fallback is per-term OR recall (not phrase match) and also triggers when the store has zero embeddings.
+- `distill` is explicitly exempt from `mine`'s determinism/latency budget — it is a manual command with no deadline, using `context.Background()` internally per chunk. A `/api/generate` call is slower than `/api/embed` (120s HTTP timeout vs 30s), and supersession judgment over a bounded fact context adds further latency that has no place inside a 60s Stop-hook window.
 
 ### NFR-5: Language support
 
@@ -123,3 +154,9 @@ both languages with equivalent quality.
 - Web UI or TUI
 - Cloud sync or backup
 - MCP server wrapper (can be added later as a thin layer)
+- Litopys's full 6-type node taxonomy (person/project/system/concept/event/lesson) — one flat `facts` table is enough for a single-project tool
+- Litopys's skill-detector / quarantine-and-promote human-review workflow — redundant with this repo's existing `dreaming`/`apply-dreaming` cycle
+- Cross-project facts
+- Per-fact embeddings (facts search is FTS5 BM25 only in v1 — facts are short, structured, and few per project)
+- Time-travel `--as-of` queries
+- BFS/multi-hop traversal for `facts related` (depth-1 only in v1)
