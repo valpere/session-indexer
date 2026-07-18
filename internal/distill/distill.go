@@ -251,7 +251,10 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 			allowedIDs[f.ID] = true
 		}
 
-		candidates, err := cli.Distill(ctx, p.Content, promptContext)
+		// context.Background(), not ctx: distill is exempt from the
+		// caller's deadline (see doc comment above) — ctx only governs
+		// cancellation between chunks, checked via ctx.Err() above.
+		candidates, err := cli.Distill(context.Background(), p.Content, promptContext)
 		if err != nil {
 			res.Failed++
 			continue // chunk not marked — retried on the next run
@@ -259,6 +262,12 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		res.ChunksDistilled++
 
 		now := time.Now().UTC().Format(time.RFC3339)
+		// storeFailed tracks whether any candidate for this chunk hit a DB
+		// error (InsertFact/SupersedeFact) rather than a confidence-gate
+		// discard. On a store failure the chunk is left unmarked so it's
+		// retried on the next run, same as a Distill call failure above —
+		// a transient DB error must not permanently drop a candidate fact.
+		var storeFailed bool
 		for _, c := range candidates {
 			if c.Confidence < cfg.Threshold {
 				res.BelowThreshold++
@@ -275,6 +284,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 			})
 			if err != nil {
 				res.Failed++
+				storeFailed = true
 				continue
 			}
 			res.FactsInserted++
@@ -288,10 +298,18 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 					continue
 				}
 				changed, err := db.SupersedeFact(d, newID, oldID, now)
-				if err == nil && changed {
+				if err != nil {
+					res.Failed++
+					storeFailed = true
+					continue
+				}
+				if changed {
 					res.Superseded++
 				}
 			}
+		}
+		if storeFailed {
+			continue // chunk not marked — retried on the next run
 		}
 		if err := db.MarkChunkDistilled(d, p.ID, now); err != nil {
 			return res, err

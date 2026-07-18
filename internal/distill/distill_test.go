@@ -110,6 +110,8 @@ func (s *stubDistiller) Distill(_ context.Context, chunk string, existing []inte
 	return f(chunk, existing)
 }
 
+// Package-level counter, safe only because no test in this suite (or this
+// codebase generally) uses t.Parallel() — revisit if that ever changes.
 var seedChunkCounter int
 
 func seedChunk(t *testing.T, d *sql.DB, content, sessionDate string) int64 {
@@ -234,6 +236,81 @@ func TestRunLeavesChunkOnError(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending after failed chunk = %+v err=%v, want 1 (must be retried later)", pending, err)
 	}
+}
+
+// TestRunLeavesChunkOnInsertFactError verifies that a DB-level failure
+// storing a candidate fact (not a Distill call failure) also leaves the
+// chunk unmarked, consistent with the "chunk not marked — retried on the
+// next run" contract used for Distill call failures. A transient DB error
+// must not permanently drop a fact candidate that was successfully extracted.
+func TestRunLeavesChunkOnInsertFactError(t *testing.T) {
+	d := openTestDB(t)
+	seedChunk(t, d, "chunk whose fact fails to store", "2026-07-01")
+	// Drop facts_fts (the trigger target for INSERT INTO facts) so
+	// InsertFact fails deterministically inside Run, without touching
+	// production code to inject a fault. CurrentFacts (a plain SELECT on
+	// facts, called earlier in the loop) is unaffected.
+	if _, err := d.Exec(`DROP TABLE facts_fts`); err != nil {
+		t.Fatalf("drop facts_fts table: %v", err)
+	}
+	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
+		func(string, []internal.Fact) ([]Candidate, error) {
+			return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+		},
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("res.Failed = %d, want 1", res.Failed)
+	}
+	if res.FactsInserted != 0 {
+		t.Fatalf("res.FactsInserted = %d, want 0", res.FactsInserted)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending after InsertFact failure = %+v err=%v, want 1 (must be retried later, not permanently dropped)", pending, err)
+	}
+}
+
+// TestRunUsesBackgroundContextForDistillCall verifies that Distill is
+// always called with a context independent of Run's outer ctx — distill is
+// exempt from the caller's deadline by design; the outer ctx only governs
+// cancellation between chunks. A caller passing an already-past-deadline
+// (but not yet Err()-returning at the loop-top check) context must not leak
+// that deadline into the per-chunk Distill call.
+func TestRunUsesBackgroundContextForDistillCall(t *testing.T) {
+	d := openTestDB(t)
+	seedChunk(t, d, "chunk checking context independence", "2026-07-01")
+	var gotCtx context.Context
+	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
+		func(string, []internal.Fact) ([]Candidate, error) {
+			return nil, nil
+		},
+	}}
+	// Wrap stubDistiller's Distill to capture the ctx it actually receives.
+	capturing := &capturingDistiller{inner: cli, captured: &gotCtx}
+	if _, err := Run(context.Background(), d, capturing, Config{Threshold: 0.7, ContextCap: 200}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotCtx == nil {
+		t.Fatal("Distill was never called")
+	}
+	if gotCtx != context.Background() {
+		t.Fatalf("Distill received a ctx other than context.Background(): %v", gotCtx)
+	}
+}
+
+type capturingDistiller struct {
+	inner    Distiller
+	captured *context.Context
+}
+
+func (c *capturingDistiller) Available() bool { return c.inner.Available() }
+func (c *capturingDistiller) Distill(ctx context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
+	*c.captured = ctx
+	return c.inner.Distill(ctx, chunk, existing)
 }
 
 func TestRunRejectsSupersedeIDOutsideContext(t *testing.T) {
