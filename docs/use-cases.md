@@ -106,7 +106,7 @@ work — without Val having to remember to ask.
 **Trigger:** Val types `/recall <query>` in Claude Code.
 
 **Flow:**
-1. Claude Code invokes `.claude/skills/session-recall/SKILL.md`.
+1. Claude Code invokes the user-level `/recall` skill (`~/.claude/skills/session-recall/SKILL.md`, symlinked from `~/wrk/common/skills/session-recall/SKILL.md`).
 2. The skill runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 10 --json`.
 3. `jq` formats results: date · role · score · snippet (400 chars).
 4. Tool-call chunks are flagged `[tool]` but not hidden.
@@ -187,7 +187,7 @@ diagnosis) would benefit from prior discussion in this project, but
 subagents start cold — no `SessionStart` hook, no shared context.
 
 **Flow:**
-1. Orchestrator runs `session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json` directly — documented in `.claude/skills/session-recall/SKILL.md` under "For orchestrators / subagent prep".
+1. Orchestrator runs `session-indexer search "<query>" --db .claude/sessions.db --limit 5 --json` directly — documented in the user-level `~/.claude/skills/session-recall/SKILL.md` under "For orchestrators / subagent prep".
 2. Formats results with `jq` (date, role, snippet). Unlike `/recall`, this
    path skips the tool-call noise filter (the regex that drops raw
    Bash/Read/Write/etc. JSON blobs) — the orchestrator curates what goes

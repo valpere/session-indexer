@@ -60,7 +60,8 @@ ollama pull bge-m3:latest
 # 3. Wire the hooks into your project (one-time setup)
 #    Copy session-index.sh + session-recall.sh → .claude/hooks/
 #    Update .claude/settings.local.json with Stop + SessionStart entries
-#    Install /recall skill → .claude/skills/session-recall/SKILL.md
+#    /recall is a user-level skill (~/.claude/skills/session-recall/, symlinked
+#    from ~/wrk/common/skills/session-recall/) — no per-project install needed.
 #    See "Hook Setup" below for the exact steps.
 
 # 4. End a Claude Code session — Stop hook mines it into .claude/sessions.db

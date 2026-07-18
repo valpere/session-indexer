@@ -440,16 +440,13 @@ session-indexer/
 │   │                            sessions.db, session-log.md, settings.local.json,
 │   │                            and telemetry.jsonl are gitignored (per-machine
 │   │                            state, see .gitignore)
-│   │                            Canonical source: ~/wrk/common/skills/session-recall/
 │   ├── hooks/
 │   │   ├── session-end.sh    — Stop: LLM summary → session-log.md
 │   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db
 │   │   ├── session-last.sh   — SessionStart: inject last summary
 │   │   ├── session-recall.sh — SessionStart: semantic context injection
 │   │   └── _lib/hook-common.sh  — logging + shared session-log.md rotation (jq/bash, no python3)
-│   ├── skills/
-│   │   └── session-recall/SKILL.md  — /recall <query> skill + orchestrator subagent-prep section
-│   └── settings.local.json
+│   ├── settings.local.json
 ├── .gitignore
 ├── go.mod                   — go 1.26.5
 └── Makefile
@@ -549,7 +546,9 @@ Relevant past sessions (semantic search):
 ## Orchestrator / Subagent Recall Pattern
 
 Subagents spawned via the Agent tool start cold — no `SessionStart` hook, no
-shared context. `.claude/skills/session-recall/SKILL.md` documents the same
+shared context. The user-level `/recall` skill
+(`~/.claude/skills/session-recall/SKILL.md`, symlinked from
+`~/wrk/common/skills/session-recall/SKILL.md`) documents the same
 `search` subcommand used by `/recall`, but for a different caller: the
 *orchestrator*, invoking it directly before spawning a subagent whose task
 benefits from project history (rather than through the Skill tool):
