@@ -383,9 +383,10 @@ Ollama REST call:
 ```
 POST http://localhost:11434/api/generate   (default; override with OLLAMA_HOST)
 {
-  "model": "qwen2.5:latest",   (default; override with OLLAMA_DISTILL_MODEL —
-                                 a chat/generate model, distinct from
-                                 bge-m3:latest; must be pulled separately)
+  "model": "glm-5.2:cloud",    (default; override with OLLAMA_DISTILL_MODEL env
+                                 or --model flag — a chat/generate model,
+                                 distinct from bge-m3:latest; must be pulled
+                                 separately)
   "prompt": "<template with CURRENT KNOWN FACTS + CHUNK>",
   "stream": false,
   "format": "json"

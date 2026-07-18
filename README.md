@@ -90,7 +90,7 @@ session-indexer mine    <jsonl-path> --db .claude/sessions.db
 session-indexer search  <query>      --db .claude/sessions.db [--limit N] [--json]
 session-indexer embed                --db .claude/sessions.db
 session-indexer stats                --db .claude/sessions.db
-session-indexer distill              --db .claude/sessions.db [--threshold 0.7]
+session-indexer distill              --db .claude/sessions.db [--threshold 0.7] [--model <name>]
 session-indexer facts search   <query>            --db .claude/sessions.db [--limit N] [--json] [--include-expired]
 session-indexer facts get      <id>               --db .claude/sessions.db [--json]
 session-indexer facts related  <id>               --db .claude/sessions.db [--json]
@@ -160,7 +160,7 @@ environment variables:
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL (scheme optional: `localhost:11434` works) |
 | `OLLAMA_MODEL` | `bge-m3:latest` | Embedding model name |
-| `OLLAMA_DISTILL_MODEL` | `qwen2.5:latest` | Chat/generate model used by `distill` — distinct from `OLLAMA_MODEL`, must be pulled separately (`ollama pull qwen2.5:latest` or your chosen model) |
+| `OLLAMA_DISTILL_MODEL` | `glm-5.2:cloud` | Chat/generate model used by `distill` — distinct from `OLLAMA_MODEL`, must be pulled separately (`ollama pull glm-5.2:cloud` or your chosen model). Override per-invocation with `distill --model <name>` (wins over the env var). |
 
 `mine` runs with a 50s `context.Context` deadline (headroom under the 60s
 Stop-hook budget): storing is fast and unconditional; embedding respects the

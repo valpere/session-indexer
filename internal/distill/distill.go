@@ -45,19 +45,28 @@ type Client struct {
 //
 //	OLLAMA_HOST          — base URL (default: http://localhost:11434);
 //	                        if value has no scheme, http:// is prepended
-//	OLLAMA_DISTILL_MODEL — chat/generate model (default: qwen2.5:latest);
+//	OLLAMA_DISTILL_MODEL — chat/generate model (default: glm-5.2:cloud);
 //	                        distinct from OLLAMA_MODEL (embeddings) — must
 //	                        be pulled separately
 func NewClient() *Client {
+	return NewClientWithModel("")
+}
+
+// NewClientWithModel is NewClient but modelOverride, if non-empty, wins over
+// OLLAMA_DISTILL_MODEL and the built-in default — for a CLI --model flag.
+func NewClientWithModel(modelOverride string) *Client {
 	baseURL := os.Getenv("OLLAMA_HOST")
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	} else if !strings.Contains(baseURL, "://") {
 		baseURL = "http://" + baseURL
 	}
-	model := os.Getenv("OLLAMA_DISTILL_MODEL")
+	model := modelOverride
 	if model == "" {
-		model = "qwen2.5:latest"
+		model = os.Getenv("OLLAMA_DISTILL_MODEL")
+	}
+	if model == "" {
+		model = "glm-5.2:cloud"
 	}
 	return NewClientURL(baseURL, model)
 }
