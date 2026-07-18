@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/valpere/session-indexer/internal"
 	"github.com/valpere/session-indexer/internal/db"
+	"github.com/valpere/session-indexer/internal/distill"
 	"github.com/valpere/session-indexer/internal/embed"
+	"github.com/valpere/session-indexer/internal/facts"
 	"github.com/valpere/session-indexer/internal/mine"
 	"github.com/valpere/session-indexer/internal/search"
 )
@@ -128,13 +131,145 @@ func main() {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Sessions indexed: %d\nChunks total:     %d\nWith embeddings:  %d (%d pending)\nOldest entry:     %s\nNewest entry:     %s\nDB size:          %s\n",
-				st.Sessions, st.Chunks, st.Embedded, st.Pending, st.Oldest, st.Newest, st.DBSize)
+			fmt.Printf("Sessions indexed: %d\nChunks total:     %d\nWith embeddings:  %d (%d pending)\nFacts current:    %d\nPending distill:  %d\nOldest entry:     %s\nNewest entry:     %s\nDB size:          %s\n",
+				st.Sessions, st.Chunks, st.Embedded, st.Pending, st.Facts, st.PendingDistill, st.Oldest, st.Newest, st.DBSize)
 			return nil
 		},
 	}
 
-	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd)
+	var threshold float64
+	distillCmd := &cobra.Command{
+		Use:   "distill",
+		Short: "Extract structured facts from mined chunks (LLM, Ollama)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			return runDistill(dbPath, threshold)
+		},
+	}
+	distillCmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum confidence to store a fact")
+
+	var factsLimit int
+	var factsJSON bool
+	var includeExpired bool
+	factsSearchCmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Keyword search over distilled facts",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			res, err := facts.Search(d, args[0], factsLimit, includeExpired)
+			if err != nil {
+				return err
+			}
+			return printFacts(res, factsJSON)
+		},
+	}
+	factsSearchCmd.Flags().IntVar(&factsLimit, "limit", 5, "max results")
+	factsSearchCmd.Flags().BoolVar(&factsJSON, "json", false, "machine-readable output")
+	factsSearchCmd.Flags().BoolVar(&includeExpired, "include-expired", false, "include tombstoned facts")
+
+	var factsGetJSON bool
+	factsGetCmd := &cobra.Command{
+		Use:   "get <id>",
+		Short: "Show a fact and its supersedes edges",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid fact id %q: %w", args[0], err)
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			fact, incoming, outgoing, err := facts.Get(d, id)
+			if err != nil {
+				return err
+			}
+			return printFactDetail(fact, incoming, outgoing, factsGetJSON)
+		},
+	}
+	factsGetCmd.Flags().BoolVar(&factsGetJSON, "json", false, "machine-readable output")
+
+	var factsRelatedJSON bool
+	factsRelatedCmd := &cobra.Command{
+		Use:   "related <id>",
+		Short: "List facts depth-1 related via supersedes",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid fact id %q: %w", args[0], err)
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			res, err := facts.Related(d, id)
+			if err != nil {
+				return err
+			}
+			return printFacts(res, factsRelatedJSON)
+		},
+	}
+	factsRelatedCmd.Flags().BoolVar(&factsRelatedJSON, "json", false, "machine-readable output")
+
+	factsSupersedeCmd := &cobra.Command{
+		Use:   "supersede <new-id> <old-id>",
+		Short: "Manually tombstone old-id in favor of new-id (audit/override backstop)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			newID, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid new-id %q: %w", args[0], err)
+			}
+			oldID, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid old-id %q: %w", args[1], err)
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			changed, err := db.SupersedeFact(d, newID, oldID, time.Now().UTC().Format(time.RFC3339))
+			if err != nil {
+				return err
+			}
+			if !changed {
+				fmt.Printf("fact %d was already tombstoned; no change made\n", oldID)
+				return nil
+			}
+			fmt.Printf("fact %d superseded by %d\n", oldID, newID)
+			return nil
+		},
+	}
+
+	factsCmd := &cobra.Command{Use: "facts", Short: "Query the distilled facts layer"}
+	factsCmd.AddCommand(factsSearchCmd, factsGetCmd, factsRelatedCmd, factsSupersedeCmd)
+
+	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, distillCmd, factsCmd)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -175,6 +310,30 @@ func runEmbed(dbPath string) error {
 	return nil
 }
 
+func runDistill(dbPath string, threshold float64) error {
+	d, err := db.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	cli := distill.NewClient()
+	if !cli.Available() {
+		return fmt.Errorf("ollama unavailable — start it and pull the distill model (OLLAMA_DISTILL_MODEL)")
+	}
+	// distill is a manual, non-time-boxed command, explicitly exempt from
+	// mine's 50s/Stop-hook budget (NFR-4).
+	res, err := distill.Run(context.Background(), d, cli, distill.Config{Threshold: threshold, ContextCap: 200})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
+		res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
+	if res.Failed > 0 {
+		fmt.Fprintf(os.Stderr, "warn: %d chunks failed to distill\n", res.Failed)
+	}
+	return nil
+}
+
 func printResults(res []internal.SearchResult, usedEmbeddings, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -205,4 +364,58 @@ func snippet(s string) string {
 		cut = cut[:i]
 	}
 	return cut + "…"
+}
+
+func printFacts(res []internal.Fact, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	for _, f := range res {
+		fmt.Printf("[%d] %s | %s | %s (confidence %.2f)%s\n",
+			f.ID, f.Subject, f.Predicate, f.Object, f.Confidence, factStatusSuffix(f))
+	}
+	if len(res) == 0 {
+		fmt.Println("(no results)")
+	}
+	return nil
+}
+
+func printFactDetail(fact internal.Fact, incoming, outgoing []internal.Fact, asJSON bool) error {
+	if asJSON {
+		out := struct {
+			Fact     internal.Fact   `json:"fact"`
+			Incoming []internal.Fact `json:"incoming"`
+			Outgoing []internal.Fact `json:"outgoing"`
+		}{fact, incoming, outgoing}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+	fmt.Printf("[%d] %s | %s | %s (confidence %.2f)%s\n",
+		fact.ID, fact.Subject, fact.Predicate, fact.Object, fact.Confidence, factStatusSuffix(fact))
+	if len(incoming) > 0 {
+		fmt.Println("Superseded by this fact:")
+		for _, f := range incoming {
+			fmt.Printf("  [%d] %s | %s | %s\n", f.ID, f.Subject, f.Predicate, f.Object)
+		}
+	}
+	if len(outgoing) > 0 {
+		fmt.Println("Superseded by:")
+		for _, f := range outgoing {
+			fmt.Printf("  [%d] %s | %s | %s\n", f.ID, f.Subject, f.Predicate, f.Object)
+		}
+	}
+	return nil
+}
+
+func factStatusSuffix(f internal.Fact) string {
+	if f.Until == nil {
+		return ""
+	}
+	if f.SupersededBy != nil {
+		return fmt.Sprintf(" [tombstoned %s, superseded by %d]", *f.Until, *f.SupersededBy)
+	}
+	return fmt.Sprintf(" [tombstoned %s]", *f.Until)
 }

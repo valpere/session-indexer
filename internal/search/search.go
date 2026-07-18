@@ -137,13 +137,15 @@ func cosine(a, b []float32) float64 {
 
 // Stats describes index state for the stats subcommand.
 type Stats struct {
-	Sessions int
-	Chunks   int
-	Embedded int
-	Pending  int
-	Oldest   string
-	Newest   string
-	DBSize   string // human-readable on-disk size, e.g. "4.2 MB"
+	Sessions       int
+	Chunks         int
+	Embedded       int
+	Pending        int
+	Facts          int // currently valid (non-tombstoned) facts
+	PendingDistill int // chunks not yet through distill
+	Oldest         string
+	Newest         string
+	DBSize         string // human-readable on-disk size, e.g. "4.2 MB"
 }
 
 // GetStats reports index counts, date range, and on-disk DB size. dbPath is
@@ -161,6 +163,14 @@ func GetStats(d *sql.DB, dbPath string) (Stats, error) {
 		return s, err
 	}
 	s.Pending = s.Chunks - s.Embedded
+	if err := q(`SELECT COUNT(*) FROM facts WHERE until IS NULL`, &s.Facts); err != nil {
+		return s, err
+	}
+	var distilled int
+	if err := q(`SELECT COUNT(*) FROM distilled_chunks`, &distilled); err != nil {
+		return s, err
+	}
+	s.PendingDistill = s.Chunks - distilled
 	// Date range is best-effort; empty store leaves these blank.
 	var oldest, newest sql.NullString
 	_ = d.QueryRow(`SELECT MIN(session_date), MAX(session_date) FROM chunks`).Scan(&oldest, &newest)

@@ -42,7 +42,7 @@ can break another.
 
 ## Prerequisites
 
-- **Go 1.26+** — to build the binary
+- **Go 1.26.5+** — to build the binary
 - **Ollama** — for vector embeddings (optional but recommended)
   - Install: [ollama.com/download](https://ollama.com/download) — native packages for macOS, Linux, Windows
   - `ollama pull bge-m3:latest` — 1024-dim multilingual model (EN + UA)
@@ -85,10 +85,15 @@ go install ./cmd/session-indexer   # to PATH (activates the Stop hook guard)
 ## Usage
 
 ```bash
-session-indexer mine   <jsonl-path> --db .claude/sessions.db
-session-indexer search <query>      --db .claude/sessions.db [--limit N] [--json]
-session-indexer embed               --db .claude/sessions.db
-session-indexer stats               --db .claude/sessions.db
+session-indexer mine    <jsonl-path> --db .claude/sessions.db
+session-indexer search  <query>      --db .claude/sessions.db [--limit N] [--json]
+session-indexer embed                --db .claude/sessions.db
+session-indexer stats                --db .claude/sessions.db
+session-indexer distill              --db .claude/sessions.db [--threshold 0.7]
+session-indexer facts search   <query>            --db .claude/sessions.db [--limit N] [--json] [--include-expired]
+session-indexer facts get      <id>               --db .claude/sessions.db [--json]
+session-indexer facts related  <id>               --db .claude/sessions.db [--json]
+session-indexer facts supersede <new-id> <old-id> --db .claude/sessions.db
 ```
 
 ### `mine` output
@@ -118,6 +123,33 @@ mined: 23 chunks inserted, 21 embedded, 0 skipped, 2 deferred
 `Score` is cosine similarity (0–1) in embedding mode, or negated BM25 rank in
 FTS5 fallback mode (higher is always better in both cases).
 
+### Facts layer — `distill` and `facts`
+
+A separate, manually-invoked layer that distills durable
+subject-predicate-object facts from mined chunks via an LLM call, alongside
+the raw-text `search` above. Never runs automatically — not wired into the
+Stop hook, no deadline. See ["Facts Layer"](docs/architecture.md#facts-layer)
+in the architecture doc for the full design (confidence gate, supersession
+safeguards).
+
+```bash
+# Extract facts from chunks not yet distilled (idempotent — safe to re-run)
+session-indexer distill --db .claude/sessions.db --threshold 0.7
+# → Distilled 12 chunks: 5 facts stored, 3 below threshold, 1 superseded
+
+# Query
+session-indexer facts search "implementation status" --db .claude/sessions.db
+# → [7] session-indexer | has | 33 merged PRs (confidence 0.92)
+
+session-indexer facts get 7 --db .claude/sessions.db
+# → shows the fact plus any incoming/outgoing supersedes edges
+
+session-indexer facts related 7 --db .claude/sessions.db
+
+# Manual override (audit/backstop — distill already judges supersession automatically)
+session-indexer facts supersede 9 7 --db .claude/sessions.db
+```
+
 ## Embeddings
 
 Requires Ollama on `localhost:11434` with `bge-m3:latest`. Override with
@@ -127,6 +159,7 @@ environment variables:
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL (scheme optional: `localhost:11434` works) |
 | `OLLAMA_MODEL` | `bge-m3:latest` | Embedding model name |
+| `OLLAMA_DISTILL_MODEL` | `qwen2.5:latest` | Chat/generate model used by `distill` — distinct from `OLLAMA_MODEL`, must be pulled separately (`ollama pull qwen2.5:latest` or your chosen model) |
 
 `mine` runs with a 50s `context.Context` deadline (headroom under the 60s
 Stop-hook budget): storing is fast and unconditional; embedding respects the
@@ -207,6 +240,30 @@ worktrees rather than sharing it. This is a known limitation, not
 intentional design (per-project isolation is intentional — see
 [`docs/requirements.md`](docs/requirements.md) FR-3 — worktree splitting
 within one project isn't). If this affects your workflow, open an issue.
+
+## Querying facts (discipline)
+
+The facts layer is a supersedable claim store, not a flat lookup table — a
+matching search hit is not automatically the current truth. For any
+non-trivial answer drawn from `facts`, follow all four steps before citing
+a fact:
+
+1. **`facts search <query>`** — find candidate facts.
+2. **`facts get <id>`** — read the fact plus its supersedes edges.
+3. **`facts related <id>`** — check for an *incoming* supersedes edge (a
+   newer fact that replaced this one). If present, jump to the newer fact
+   and repeat from step 2.
+4. **Check `until`** — a non-null `until` means the fact is tombstoned;
+   don't cite it as current (it's still visible via `--include-expired`
+   for historical context, but never as present-tense truth).
+
+**Anti-pattern:** answering after step 1 alone. `facts search` ranks by
+keyword match, not recency or validity — a stale, superseded fact can
+easily outrank its replacement on pure BM25 score if it happens to phrase
+the query terms more directly. Skipping steps 2–4 is exactly how a
+distilled-but-superseded fact (e.g. an old "implementation not started"
+claim) gets cited as current truth — the same class of drift this feature
+exists to catch.
 
 ## Troubleshooting
 
