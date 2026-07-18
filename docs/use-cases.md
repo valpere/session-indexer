@@ -202,3 +202,64 @@ search access.
 (`bug-fixer`, `code-generator`, `tech-lead`, etc.) exclude the `Skill` tool,
 so a spawned subagent cannot invoke `/recall` or this entrypoint itself
 mid-task.
+
+---
+
+## UC-11: Catch a stale project fact before citing it
+
+**Actor:** Val or an agent, mid-session, about to state something as current
+truth about the project (e.g. "implementation status," a past decision).
+
+**Trigger:** A raw-text `search` hit surfaces an old session where something
+was said that may no longer be true — session history is append-only, so an
+outdated statement never disappears on its own.
+
+**Flow:**
+1. Periodically (or before shipping a batch of sessions), run:
+   `session-indexer distill --db .claude/sessions.db --threshold 0.7`
+2. The LLM call extracts subject-predicate-object facts from newly-mined
+   chunks and judges supersession against currently-valid facts about the
+   same subject — a corrected/updated statement auto-tombstones the fact
+   it replaces.
+3. Before citing any fact, follow the discipline in README's "Querying
+   facts": `facts search <query>` → `facts get <id>` → `facts related <id>`
+   (check for an incoming supersedes edge) → check `until`.
+4. If step 3 surfaces a tombstoned fact, the current one is found via its
+   `superseded_by`/incoming edge instead — the stale claim is never cited
+   as present-tense truth.
+
+**Success:** A fact distilled from an old session that has since become
+false (e.g. "not started" → later sessions show it shipped) is caught at
+query time via its tombstone, not months later during a periodic review.
+This is the concrete gap the facts layer exists to close — see
+`docs/architecture.md`'s "Facts Layer" section for the full rationale.
+
+---
+
+## UC-12: Manually correct a missed or wrong supersession
+
+**Actor:** Val, after noticing `facts search` still surfaces two
+contradictory facts about the same subject as both "current."
+
+**Trigger:** `distill`'s automatic supersession judgment is bounded by
+`ContextCap` (200) and by whatever the model actually noticed in a given
+chunk — it can miss a contradiction the LLM didn't recognize as the same
+subject, or one that arose in two mine runs distilled far apart in time.
+
+**Flow:**
+1. `session-indexer facts search "<subject>" --db .claude/sessions.db
+   --include-expired` to see the full history for that subject.
+2. Identify which fact id is actually current and which is stale.
+3. `session-indexer facts supersede <new-id> <old-id> --db
+   .claude/sessions.db` — manually tombstones `<old-id>` in favor of
+   `<new-id>`.
+4. Re-running `facts search` (without `--include-expired`) now excludes
+   the corrected fact; `facts get <old-id>` shows the `until` timestamp
+   and `superseded_by` edge as if `distill` had caught it automatically.
+
+**Success:** The facts layer stays correct even when automatic
+supersession misses a case — the same `SupersedeFact` function backs both
+the automatic and manual paths, so the resulting state is indistinguishable
+from an automatic supersession. This is the "audit/override backstop"
+referenced throughout the design docs, exercised for real rather than
+staying purely theoretical.
