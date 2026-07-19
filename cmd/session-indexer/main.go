@@ -138,6 +138,7 @@ func main() {
 	}
 
 	var threshold float64
+	var distillModel string
 	distillCmd := &cobra.Command{
 		Use:   "distill",
 		Short: "Extract structured facts from mined chunks (LLM, Ollama)",
@@ -146,10 +147,11 @@ func main() {
 			if dbPath == "" {
 				return fmt.Errorf("--db is required")
 			}
-			return runDistill(dbPath, threshold)
+			return runDistill(dbPath, threshold, distillModel)
 		},
 	}
 	distillCmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum confidence to store a fact")
+	distillCmd.Flags().StringVar(&distillModel, "model", "", "Ollama chat/generate model (default: $OLLAMA_DISTILL_MODEL or glm-5.2:cloud)")
 
 	var factsLimit int
 	var factsJSON bool
@@ -310,13 +312,13 @@ func runEmbed(dbPath string) error {
 	return nil
 }
 
-func runDistill(dbPath string, threshold float64) error {
+func runDistill(dbPath string, threshold float64, model string) error {
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	cli := distill.NewClient()
+	cli := distill.NewClientWithModel(model)
 	if !cli.Available() {
 		return fmt.Errorf("ollama unavailable — start it and pull the distill model (OLLAMA_DISTILL_MODEL)")
 	}
