@@ -7,7 +7,7 @@ help:
 
 BINARY   := bin/session-indexer
 TEST_PKG ?= ./...
-VERSION  := $(shell git describe --tags --exact-match 2>/dev/null || echo "0.1.0")
+VERSION  := $(shell git describe --tags --exact-match 2>/dev/null || echo "0.2.0")
 LDFLAGS  := -ldflags "-X main.version=$(VERSION)"
 
 build: ## build to bin/session-indexer
