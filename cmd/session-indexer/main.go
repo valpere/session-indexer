@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -142,15 +145,21 @@ func main() {
 	var distillConcurrency int
 	var distillLimit int
 	var distillRetries int
+	var distillCircuitBreaker int
 	distillCmd := &cobra.Command{
 		Use:   "distill",
 		Short: "Extract structured facts from mined chunks (LLM, Ollama)",
-		Args:  cobra.NoArgs,
+		Long: "Extract structured facts from mined chunks (LLM, Ollama).\n\n" +
+			"Safe to interrupt (Ctrl-C / SIGTERM) or stop early: chunks are marked\n" +
+			"distilled one at a time as they complete, so re-running the same\n" +
+			"command later picks up exactly where this run left off — nothing to\n" +
+			"resume manually.",
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if dbPath == "" {
 				return fmt.Errorf("--db is required")
 			}
-			return runDistill(dbPath, threshold, distillModel, distillConcurrency, distillLimit, distillRetries)
+			return runDistill(dbPath, threshold, distillModel, distillConcurrency, distillLimit, distillRetries, distillCircuitBreaker)
 		},
 	}
 	distillCmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum confidence to store a fact")
@@ -158,6 +167,7 @@ func main() {
 	distillCmd.Flags().IntVar(&distillConcurrency, "concurrency", 1, "chunks distilled in parallel (network-bound; DB writes stay serialized; Ollama cloud 429s above ~20)")
 	distillCmd.Flags().IntVar(&distillLimit, "limit", 0, "max chunks to process this run (0 = all pending)")
 	distillCmd.Flags().IntVar(&distillRetries, "retries", 2, "extra attempts for a chunk that errors (e.g. 429), with exponential backoff, before leaving it for the next run")
+	distillCmd.Flags().IntVar(&distillCircuitBreaker, "circuit-breaker", 5, "stop the run after this many consecutive chunks fail all their retries (0 disables; signals a persistent outage, not a blip — e.g. Ollama quota exhausted)")
 
 	var factsLimit int
 	var factsJSON bool
@@ -279,8 +289,25 @@ func main() {
 
 	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, distillCmd, factsCmd)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		switch {
+		case errors.Is(err, distill.ErrCircuitBreaker):
+			// runDistill already explained the stop and how to resume —
+			// don't repeat it with a generic "error:" prefix. Exit code 2
+			// (distinct from 1) lets a wrapper script like
+			// bin/distill-backfill.sh tell "this project hit a persistent
+			// Ollama problem" apart from an ordinary failure and stop
+			// trying the rest of the backlog instead of hammering a dead
+			// endpoint project after project.
+			os.Exit(2)
+		case errors.Is(err, context.Canceled):
+			// Likewise already explained by runDistill; SIGINT/SIGTERM
+			// already reached the whole process group, so there's nothing
+			// left for a wrapper script to specially detect here.
+			os.Exit(130)
+		default:
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -318,7 +345,7 @@ func runEmbed(dbPath string) error {
 	return nil
 }
 
-func runDistill(dbPath string, threshold float64, model string, concurrency, limit, retries int) error {
+func runDistill(dbPath string, threshold float64, model string, concurrency, limit, retries, circuitBreaker int) error {
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -329,23 +356,47 @@ func runDistill(dbPath string, threshold float64, model string, concurrency, lim
 		return fmt.Errorf("ollama unavailable — start it and pull the distill model (OLLAMA_DISTILL_MODEL)")
 	}
 	start := time.Now()
-	// distill is a manual, non-time-boxed command, explicitly exempt from
-	// mine's 50s/Stop-hook budget (NFR-4).
-	res, err := distill.Run(context.Background(), d, cli, distill.Config{
-		Threshold: threshold, ContextCap: 200, Concurrency: concurrency, Limit: limit, MaxRetries: retries,
+	// SIGINT/SIGTERM cancel the context passed to distill.Run instead of
+	// killing the process outright: Run stops dispatching new chunks but
+	// lets whatever's already in flight finish and get written, so a
+	// Ctrl-C mid-run never loses a chunk that had already succeeded — it's
+	// just picked up again (ChunksWithoutFacts) on the next invocation.
+	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignal()
+	// distill is otherwise a manual, non-time-boxed command, explicitly
+	// exempt from mine's 50s/Stop-hook budget (NFR-4).
+	res, err := distill.Run(ctx, d, cli, distill.Config{
+		Threshold: threshold, ContextCap: 200, Concurrency: concurrency, Limit: limit,
+		MaxRetries: retries, CircuitBreaker: circuitBreaker,
 		OnProgress: func(done, total int, res distill.Result) {
 			fmt.Fprintf(os.Stderr, "\rdistill: %d/%d chunks (%d facts, %d below threshold, %d failed) [%s]",
 				done, total, res.FactsInserted, res.BelowThreshold, res.Failed, time.Since(start).Round(time.Second))
 		},
 	})
-	if err != nil {
-		return err
-	}
 	fmt.Fprintln(os.Stderr)
-	fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
-		res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
-	if res.Failed > 0 {
-		fmt.Fprintf(os.Stderr, "warn: %d chunks failed to distill\n", res.Failed)
+	// Print what happened even on early stop — done, ErrCircuitBreaker, and
+	// ctx.Err() (Ctrl-C) all leave real, durable progress worth reporting,
+	// not just a bare error. A generic error (e.g. ChunksWithoutFacts
+	// failing before any chunk was even dispatched) gets none of this —
+	// printing "Distilled 0 chunks" right before "error: ..." would read
+	// as a spurious success line for a run that never started.
+	if err == nil || errors.Is(err, distill.ErrCircuitBreaker) || errors.Is(err, context.Canceled) {
+		fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
+			res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
+		if res.Failed > 0 {
+			fmt.Fprintf(os.Stderr, "warn: %d chunks failed to distill\n", res.Failed)
+		}
+	}
+	switch {
+	case errors.Is(err, distill.ErrCircuitBreaker):
+		fmt.Fprintf(os.Stderr, "stopped: %v — likely a persistent Ollama problem (quota exhausted, endpoint down), not a blip\n", err)
+		fmt.Fprintln(os.Stderr, "re-run the same command later to continue from here")
+		return err
+	case errors.Is(err, context.Canceled):
+		fmt.Fprintln(os.Stderr, "stopped: interrupted — re-run the same command later to continue from here")
+		return err
+	case err != nil:
+		return err
 	}
 	return nil
 }

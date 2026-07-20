@@ -606,3 +606,96 @@ func TestRunCtxCancellationDuringConcurrentRun(t *testing.T) {
 			res.ChunksDistilled, len(pending), res.ChunksDistilled+len(pending), n)
 	}
 }
+
+// TestRunCircuitBreakerStopsEarly models a persistent Ollama outage (quota
+// exhausted, endpoint down — not the transient 429 MaxRetries already
+// absorbs): every chunk fails every attempt. With Concurrency 1 the run is
+// deterministic, so once CircuitBreaker consecutive full-failures accrue,
+// Run must stop dispatching immediately rather than grinding through the
+// rest of the backlog at MaxRetries cost per chunk.
+func TestRunCircuitBreakerStopsEarly(t *testing.T) {
+	d := openTestDB(t)
+	const n = 20
+	for i := 0; i < n; i++ {
+		seedChunk(t, d, "chunk that always fails", "2026-07-01")
+	}
+	cli := &flakyDistiller{avail: true, failCount: 1_000_000}
+	res, err := Run(context.Background(), d, cli, Config{
+		Threshold: 0.7, ContextCap: 200, MaxRetries: 0, CircuitBreaker: 3,
+	})
+	if !errors.Is(err, ErrCircuitBreaker) {
+		t.Fatalf("err = %v, want ErrCircuitBreaker", err)
+	}
+	// Exactly 3 in the common case, but the dispatcher can race one more
+	// job into the (single, here) worker's receive loop before it observes
+	// the cancellation triggered by the 3rd failure — that job is already
+	// "in flight" by this package's stop-gracefully contract, so a small
+	// overshoot is expected, not a bug. What must never happen is draining
+	// anywhere near the full backlog.
+	if res.Failed < 3 || res.Failed > 5 {
+		t.Fatalf("res.Failed = %d, want 3-5 (stops shortly after the 3rd consecutive failure)", res.Failed)
+	}
+	if got := atomic.LoadInt64(&cli.calls); got >= n {
+		t.Fatalf("Distill called %d times, want well under %d (dispatch must stop, not drain the whole backlog)", got, n)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != n {
+		t.Fatalf("pending after breaker trip = %+v err=%v, want all %d left for a later run", pending, err, n)
+	}
+}
+
+// TestRunCircuitBreakerResetsOnSuccess verifies a success anywhere in the
+// stream resets the consecutive-failure count — a breaker that counted
+// total failures instead of a streak would trip on a backlog that's mostly
+// fine but has scattered unrelated failures, which is not the "persistent
+// outage" signal it's meant to catch.
+func TestRunCircuitBreakerResetsOnSuccess(t *testing.T) {
+	d := openTestDB(t)
+	// Fail, fail, succeed, fail, fail, succeed, ... — never 3 in a row,
+	// even though 8 of 12 chunks fail overall (well past a naive total
+	// count of 3).
+	const n = 12
+	for i := 0; i < n; i++ {
+		seedChunk(t, d, "chunk", "2026-07-01")
+	}
+	var calls int64
+	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+		n := atomic.AddInt64(&calls, 1)
+		if n%3 == 0 {
+			return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+		}
+		return nil, errors.New("simulated failure")
+	}}
+	res, err := Run(context.Background(), d, cli, Config{
+		Threshold: 0.7, ContextCap: 200, MaxRetries: 0, CircuitBreaker: 3,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v, want nil (breaker must not trip on a failure streak that never reaches 3)", err)
+	}
+	if res.ChunksDistilled != 4 || res.Failed != 8 {
+		t.Fatalf("res = %+v, want ChunksDistilled=4 Failed=8", res)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != n-4 {
+		t.Fatalf("pending = %+v err=%v, want %d (only the successes marked)", pending, err, n-4)
+	}
+}
+
+// TestRunCircuitBreakerDisabledByDefault verifies CircuitBreaker's zero
+// value drains the whole backlog regardless of failure streak length,
+// preserving pre-circuit-breaker behavior for existing callers.
+func TestRunCircuitBreakerDisabledByDefault(t *testing.T) {
+	d := openTestDB(t)
+	const n = 10
+	for i := 0; i < n; i++ {
+		seedChunk(t, d, "chunk that always fails", "2026-07-01")
+	}
+	cli := &flakyDistiller{avail: true, failCount: 1_000_000}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, MaxRetries: 0})
+	if err != nil {
+		t.Fatalf("Run: %v, want nil (CircuitBreaker=0 must never trip)", err)
+	}
+	if res.Failed != n {
+		t.Fatalf("res.Failed = %d, want %d (every chunk attempted)", res.Failed, n)
+	}
+}
