@@ -88,6 +88,16 @@ $EXCERPT"
 
 # --- LLM call helpers ---
 
+# is_valid_summary rejects anything that doesn't start with the expected
+# "## $TODAY" header — guards against a model ignoring the prompt and
+# returning generic chit-chat (observed: agy silently dropping the prompt
+# when passed via stdin, e.g. "I am currently running on Gemini 3.5
+# Flash..."). A non-empty result is not enough on its own; it must also
+# look like the summary we asked for, or the next tier should be tried.
+is_valid_summary() {
+  [[ "$1" == "## $TODAY"* ]]
+}
+
 try_agy() {
   local models=(
     "Gemini 3.5 Flash (Low)"
@@ -100,8 +110,12 @@ try_agy() {
   for model in "${models[@]}"; do
     echo "[$(date -Iseconds)] session-end: trying agy model: $model" >> "$LOG_FILE"
     local result
-    result=$(timeout 45 agy -p --model "$model" <<< "$1" 2>>"$LOG_FILE") && \
-      [[ -n "$result" ]] && { echo "$result"; return 0; }
+    # Prompt as a positional arg, not stdin — `agy -p` reads the prompt
+    # from its argument; piping via `<<<` leaves it unset and agy falls
+    # back to a generic interactive-style greeting instead of erroring.
+    result=$(timeout 45 agy -p "$1" --model "$model" 2>>"$LOG_FILE") && \
+      is_valid_summary "$result" && { echo "$result"; return 0; }
+    echo "[$(date -Iseconds)] session-end: agy model $model returned no usable summary" >> "$LOG_FILE"
   done
   return 1
 }
@@ -147,7 +161,8 @@ try_opencode() {
         map(select(. != null and .type == "text")) |
         map(.part.text) |
         join("")
-      ') && [[ -n "$result" ]] && { echo "$result"; return 0; }
+      ') && is_valid_summary "$result" && { echo "$result"; return 0; }
+    echo "[$(date -Iseconds)] session-end: opencode model $model returned no usable summary" >> "$LOG_FILE"
   done
   return 1
 }
