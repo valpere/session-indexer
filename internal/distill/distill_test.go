@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/valpere/session-indexer/internal"
 	"github.com/valpere/session-indexer/internal/db"
@@ -552,5 +553,56 @@ func TestRunProgressCallback(t *testing.T) {
 		if v != i+1 {
 			t.Fatalf("OnProgress done values = %v, want 1..%d each exactly once", doneSeen, n)
 		}
+	}
+}
+
+// TestRunCtxCancellationDuringConcurrentRun cancels ctx while several
+// workers are genuinely in flight (Concurrency>1) and asserts Run still
+// returns promptly with ctx.Err() — a worker that sees ctx cancelled at
+// the top of its jobs loop returns without sending an outcome for that
+// chunk, but wg.Wait()+close(outcomes) still fires regardless, so this
+// must never hang or leak, only leave the un-dispatched chunks pending
+// for the next run. Run with -race: a bug here would show as a hang
+// (caught by the timeout below) or a data race on res/doneSeen.
+func TestRunCtxCancellationDuringConcurrentRun(t *testing.T) {
+	d := openTestDB(t)
+	const n = 50
+	for i := 0; i < n; i++ {
+		seedChunk(t, d, "chunk", "2026-07-01")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+		time.Sleep(20 * time.Millisecond)
+		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+	}}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan struct{})
+	var res Result
+	var err error
+	go func() {
+		res, err = Run(ctx, d, cli, Config{Threshold: 0.7, ContextCap: 200, Concurrency: 5})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return within 5s after ctx cancellation — hang or goroutine leak")
+	}
+	if err == nil {
+		t.Fatalf("Run returned nil error after ctx cancellation, res=%+v", res)
+	}
+
+	pending, perr := db.ChunksWithoutFacts(d)
+	if perr != nil {
+		t.Fatalf("ChunksWithoutFacts: %v", perr)
+	}
+	if res.ChunksDistilled+len(pending) != n {
+		t.Fatalf("res.ChunksDistilled=%d + pending=%d = %d, want %d (every chunk accounted for exactly once)",
+			res.ChunksDistilled, len(pending), res.ChunksDistilled+len(pending), n)
 	}
 }

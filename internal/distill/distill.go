@@ -244,8 +244,9 @@ type Config struct {
 	MaxRetries int
 
 	// OnProgress, if set, is called synchronously after each chunk is
-	// resolved (success or failure), from whichever goroutine finishes
-	// last — cheap and non-blocking work only (e.g. a log line).
+	// resolved (success or failure), always from Run's own single
+	// outcome-processing goroutine (never from a worker) — cheap and
+	// non-blocking work only (e.g. a log line).
 	OnProgress func(done, total int, res Result)
 }
 
@@ -258,8 +259,15 @@ type Config struct {
 // the first place (observed empirically — retries alone, un-jittered, still
 // left ~20% of a concurrency=20 run failed).
 func retryBackoff(attempt int) time.Duration {
-	d := 500 * time.Millisecond * (1 << attempt)
 	const maxDelay = 8 * time.Second
+	// 500ms*2^4 already reaches maxDelay, so clamp attempt before the
+	// shift — 1<<attempt otherwise overflows int64 around attempt~=35
+	// (reachable via --retries with a large value), producing a negative
+	// d that made rand.Int64N(int64(d)/2) panic.
+	if attempt > 4 {
+		attempt = 4
+	}
+	d := 500 * time.Millisecond * (1 << attempt)
 	if d > maxDelay {
 		d = maxDelay
 	}
