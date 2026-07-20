@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -20,6 +21,15 @@ import (
 	"github.com/valpere/session-indexer/internal"
 	"github.com/valpere/session-indexer/internal/db"
 )
+
+// ErrCircuitBreaker is returned by Run (wrapped, with the streak length) when
+// cfg.CircuitBreaker consecutive chunks each exhaust their retry budget and
+// still fail — a persistent condition (Ollama cloud quota/rate exhausted for
+// the day, endpoint unreachable) rather than the transient blips MaxRetries
+// already absorbs. Callers should treat it as "stop and try again later",
+// not a bug: chunks already marked distilled before the trip are durable,
+// so the next Run naturally resumes from where this one gave up.
+var ErrCircuitBreaker = errors.New("distill: circuit breaker tripped")
 
 // Candidate is one fact proposed by the distiller for a single chunk.
 type Candidate struct {
@@ -243,6 +253,13 @@ type Config struct {
 	// single-attempt behavior. Each retry waits retryBackoff(attempt).
 	MaxRetries int
 
+	// CircuitBreaker stops Run early — no further chunks dispatched,
+	// already-in-flight ones allowed to finish — after this many
+	// consecutive chunks each exhaust MaxRetries and still fail. 0
+	// (default) disables it: Run always drains every pending chunk
+	// regardless of failure streaks, matching the original behavior.
+	CircuitBreaker int
+
 	// OnProgress, if set, is called synchronously after each chunk is
 	// resolved (success or failure), always from Run's own single
 	// outcome-processing goroutine (never from a worker) — cheap and
@@ -318,6 +335,15 @@ type fetchOutcome struct {
 // a large fraction of its chunks to rate limiting instead of just slowing
 // down. A chunk still failing after the retry budget is left unmarked, same
 // as before — picked up on the next Run.
+//
+// If cfg.CircuitBreaker consecutive chunks each exhaust their retry budget,
+// Run stops dispatching further chunks (already-in-flight ones are allowed
+// to finish, same "graceful, not abrupt" treatment as ctx cancellation) and
+// returns ErrCircuitBreaker. External cancellation of ctx itself (e.g. the
+// caller wiring SIGINT/SIGTERM via signal.NotifyContext) is handled the same
+// way and returns ctx.Err(). Either way, every chunk marked distilled before
+// the stop is durable — nothing to "resume" beyond calling Run again later;
+// ChunksWithoutFacts will simply pick up where this call left off.
 func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, error) {
 	var res Result
 	pending, err := db.ChunksWithoutFacts(d)
@@ -334,6 +360,14 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		concurrency = 1
 	}
 
+	// runCtx is what dispatch/workers actually watch for "stop now": it's
+	// cancelled either by the caller (ctx) or by us, internally, when the
+	// circuit breaker trips. Distinguishing the two causes at the end is
+	// what lets Run report ErrCircuitBreaker instead of a bare ctx.Err()
+	// for a self-inflicted stop.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
 	jobs := make(chan db.PendingFactChunk)
 	outcomes := make(chan fetchOutcome)
 
@@ -343,7 +377,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		go func() {
 			defer wg.Done()
 			for p := range jobs {
-				if ctx.Err() != nil {
+				if runCtx.Err() != nil {
 					return
 				}
 				existing, err := db.CurrentFacts(d, cfg.ContextCap+1)
@@ -360,9 +394,10 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				if contextExceeded {
 					promptContext = nil
 				}
-				// context.Background(), not ctx: distill is exempt from the
-				// caller's deadline (see doc comment above) — ctx only
-				// governs cancellation between chunks.
+				// context.Background(), not runCtx: distill is exempt from
+				// the caller's deadline (see doc comment above) — runCtx
+				// only governs cancellation between chunks/retries, an
+				// in-flight Ollama call is always let finish.
 				var candidates []Candidate
 				var derr error
 				for attempt := 0; ; attempt++ {
@@ -372,9 +407,9 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 					}
 					select {
 					case <-time.After(retryBackoff(attempt)):
-					case <-ctx.Done():
+					case <-runCtx.Done():
 					}
-					if ctx.Err() != nil {
+					if runCtx.Err() != nil {
 						break
 					}
 				}
@@ -390,7 +425,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		for _, p := range pending {
 			select {
 			case jobs <- p:
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			}
 		}
@@ -401,15 +436,25 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	}()
 
 	done := 0
+	var consecutiveFailures int
+	var breakerTripped bool
 	for oc := range outcomes {
 		done++
 		if oc.err != nil {
 			res.Failed++ // chunk not marked — retried on the next run
+			if cfg.CircuitBreaker > 0 {
+				consecutiveFailures++
+				if consecutiveFailures >= cfg.CircuitBreaker && !breakerTripped {
+					breakerTripped = true
+					cancelRun()
+				}
+			}
 			if cfg.OnProgress != nil {
 				cfg.OnProgress(done, total, res)
 			}
 			continue
 		}
+		consecutiveFailures = 0
 		res.ChunksDistilled++
 
 		allowedIDs := make(map[int64]bool, len(oc.promptContext))
@@ -475,6 +520,9 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		if cfg.OnProgress != nil {
 			cfg.OnProgress(done, total, res)
 		}
+	}
+	if breakerTripped {
+		return res, fmt.Errorf("%w after %d consecutive chunk failures", ErrCircuitBreaker, cfg.CircuitBreaker)
 	}
 	if ctx.Err() != nil {
 		return res, ctx.Err()
