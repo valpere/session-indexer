@@ -376,11 +376,16 @@ func runDistill(dbPath string, threshold float64, model string, concurrency, lim
 	fmt.Fprintln(os.Stderr)
 	// Print what happened even on early stop — done, ErrCircuitBreaker, and
 	// ctx.Err() (Ctrl-C) all leave real, durable progress worth reporting,
-	// not just a bare error.
-	fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
-		res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
-	if res.Failed > 0 {
-		fmt.Fprintf(os.Stderr, "warn: %d chunks failed to distill\n", res.Failed)
+	// not just a bare error. A generic error (e.g. ChunksWithoutFacts
+	// failing before any chunk was even dispatched) gets none of this —
+	// printing "Distilled 0 chunks" right before "error: ..." would read
+	// as a spurious success line for a run that never started.
+	if err == nil || errors.Is(err, distill.ErrCircuitBreaker) || errors.Is(err, context.Canceled) {
+		fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
+			res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
+		if res.Failed > 0 {
+			fmt.Fprintf(os.Stderr, "warn: %d chunks failed to distill\n", res.Failed)
+		}
 	}
 	switch {
 	case errors.Is(err, distill.ErrCircuitBreaker):

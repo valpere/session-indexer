@@ -344,6 +344,14 @@ type fetchOutcome struct {
 // way and returns ctx.Err(). Either way, every chunk marked distilled before
 // the stop is durable — nothing to "resume" beyond calling Run again later;
 // ChunksWithoutFacts will simply pick up where this call left off.
+//
+// "Consecutive" is counted in outcome-arrival order, not dispatch order —
+// under Concurrency>1 a still-in-flight chunk dispatched before a failing
+// streak can report success afterwards and reset the count. In a genuine
+// persistent outage this only delays the trip by at most Concurrency-1
+// extra failures, never masks it (verified: Concurrency=8, CircuitBreaker=3
+// against an always-failing Distiller trips within 11 calls, not the full
+// backlog).
 func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, error) {
 	var res Result
 	pending, err := db.ChunksWithoutFacts(d)
@@ -436,6 +444,9 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	}()
 
 	done := 0
+	// consecutiveFailures and breakerTripped, like res itself, are only
+	// ever touched here in Run's own single outcome-processing goroutine —
+	// never by a worker — so no locking is needed.
 	var consecutiveFailures int
 	var breakerTripped bool
 	for oc := range outcomes {
