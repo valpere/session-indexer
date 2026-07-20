@@ -139,6 +139,9 @@ func main() {
 
 	var threshold float64
 	var distillModel string
+	var distillConcurrency int
+	var distillLimit int
+	var distillRetries int
 	distillCmd := &cobra.Command{
 		Use:   "distill",
 		Short: "Extract structured facts from mined chunks (LLM, Ollama)",
@@ -147,11 +150,14 @@ func main() {
 			if dbPath == "" {
 				return fmt.Errorf("--db is required")
 			}
-			return runDistill(dbPath, threshold, distillModel)
+			return runDistill(dbPath, threshold, distillModel, distillConcurrency, distillLimit, distillRetries)
 		},
 	}
 	distillCmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum confidence to store a fact")
 	distillCmd.Flags().StringVar(&distillModel, "model", "", "Ollama chat/generate model (default: $OLLAMA_DISTILL_MODEL or glm-5.2:cloud)")
+	distillCmd.Flags().IntVar(&distillConcurrency, "concurrency", 1, "chunks distilled in parallel (network-bound; DB writes stay serialized; Ollama cloud 429s above ~20)")
+	distillCmd.Flags().IntVar(&distillLimit, "limit", 0, "max chunks to process this run (0 = all pending)")
+	distillCmd.Flags().IntVar(&distillRetries, "retries", 2, "extra attempts for a chunk that errors (e.g. 429), with exponential backoff, before leaving it for the next run")
 
 	var factsLimit int
 	var factsJSON bool
@@ -312,7 +318,7 @@ func runEmbed(dbPath string) error {
 	return nil
 }
 
-func runDistill(dbPath string, threshold float64, model string) error {
+func runDistill(dbPath string, threshold float64, model string, concurrency, limit, retries int) error {
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -322,12 +328,20 @@ func runDistill(dbPath string, threshold float64, model string) error {
 	if !cli.Available() {
 		return fmt.Errorf("ollama unavailable — start it and pull the distill model (OLLAMA_DISTILL_MODEL)")
 	}
+	start := time.Now()
 	// distill is a manual, non-time-boxed command, explicitly exempt from
 	// mine's 50s/Stop-hook budget (NFR-4).
-	res, err := distill.Run(context.Background(), d, cli, distill.Config{Threshold: threshold, ContextCap: 200})
+	res, err := distill.Run(context.Background(), d, cli, distill.Config{
+		Threshold: threshold, ContextCap: 200, Concurrency: concurrency, Limit: limit, MaxRetries: retries,
+		OnProgress: func(done, total int, res distill.Result) {
+			fmt.Fprintf(os.Stderr, "\rdistill: %d/%d chunks (%d facts, %d below threshold, %d failed) [%s]",
+				done, total, res.FactsInserted, res.BelowThreshold, res.Failed, time.Since(start).Round(time.Second))
+		},
+	})
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr)
 	fmt.Printf("Distilled %d chunks: %d facts stored, %d below threshold, %d superseded\n",
 		res.ChunksDistilled, res.FactsInserted, res.BelowThreshold, res.Superseded)
 	if res.Failed > 0 {

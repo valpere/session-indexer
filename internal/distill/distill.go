@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/valpere/session-indexer/internal"
@@ -152,7 +154,7 @@ func (c *Client) Distill(ctx context.Context, chunk string, existing []internal.
 		return nil, fmt.Errorf("ollama returned an empty response")
 	}
 	var parsed distillResponse
-	if err := json.Unmarshal([]byte(out.Response), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(stripMarkdownFence(out.Response)), &parsed); err != nil {
 		return nil, fmt.Errorf("decode facts json: %w", err)
 	}
 	candidates := make([]Candidate, 0, len(parsed.Facts))
@@ -166,6 +168,23 @@ func (c *Client) Distill(ctx context.Context, chunk string, existing []internal.
 		})
 	}
 	return candidates, nil
+}
+
+// stripMarkdownFence removes a wrapping ```json ... ``` (or bare ``` ... ```)
+// fence some models emit despite "format":"json" — observed with
+// gemma4:31b-cloud; glm-5.2:cloud does not do this. A no-op on plain JSON.
+func stripMarkdownFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "```")
+	if nl := strings.IndexByte(s, '\n'); nl != -1 && strings.TrimSpace(s[:nl]) != "" {
+		// Fence's opening line is a language tag (e.g. "json") — drop it.
+		s = s[nl+1:]
+	}
+	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	return strings.TrimSpace(s)
 }
 
 const promptTemplate = `You extract atomic, durable facts from a single Claude Code conversation
@@ -212,8 +231,48 @@ func buildPrompt(chunk string, existing []internal.Fact) string {
 
 // Config controls a distill Run.
 type Config struct {
-	Threshold  float64 // minimum confidence to store a fact (default 0.7)
-	ContextCap int     // max current facts to feed the distiller for supersession judgment (default 200)
+	Threshold   float64 // minimum confidence to store a fact (default 0.7)
+	ContextCap  int     // max current facts to feed the distiller for supersession judgment (default 200)
+	Concurrency int     // chunks distilled in parallel; <=1 runs strictly sequential (default)
+	Limit       int     // max chunks to process this run; <=0 means no limit (process all pending)
+
+	// MaxRetries is the number of extra Distill attempts for a chunk whose
+	// first call errors (e.g. HTTP 429 from Ollama cloud under concurrent
+	// load, or a transient timeout), before giving up and leaving the
+	// chunk for the next run. 0 (default) preserves the original
+	// single-attempt behavior. Each retry waits retryBackoff(attempt).
+	MaxRetries int
+
+	// OnProgress, if set, is called synchronously after each chunk is
+	// resolved (success or failure), always from Run's own single
+	// outcome-processing goroutine (never from a worker) — cheap and
+	// non-blocking work only (e.g. a log line).
+	OnProgress func(done, total int, res Result)
+}
+
+// retryBackoff is the delay before retry attempt n (0-indexed, so n=0 is the
+// wait before the first retry): ~500ms, 1s, 2s, 4s, capped at 8s, each
+// jittered +/-25%. Ollama cloud's 429 responses carry no Retry-After header
+// to key off instead. The jitter matters under concurrency: a fixed
+// schedule means every worker that got 429'd in the same instant retries in
+// the same instant too, reproducing the same burst that caused the 429 in
+// the first place (observed empirically — retries alone, un-jittered, still
+// left ~20% of a concurrency=20 run failed).
+func retryBackoff(attempt int) time.Duration {
+	const maxDelay = 8 * time.Second
+	// 500ms*2^4 already reaches maxDelay, so clamp attempt before the
+	// shift — 1<<attempt otherwise overflows int64 around attempt~=35
+	// (reachable via --retries with a large value), producing a negative
+	// d that made rand.Int64N(int64(d)/2) panic.
+	if attempt > 4 {
+		attempt = 4
+	}
+	d := 500 * time.Millisecond * (1 << attempt)
+	if d > maxDelay {
+		d = maxDelay
+	}
+	jitter := time.Duration(rand.Int64N(int64(d)/2)) - d/4 // +/-25%
+	return d + jitter
 }
 
 // Result summarizes a distill run.
@@ -225,6 +284,16 @@ type Result struct {
 	Failed          int
 }
 
+// fetchOutcome is one chunk's Distill call result, produced by a worker and
+// consumed by Run's single DB-writing loop.
+type fetchOutcome struct {
+	chunk           db.PendingFactChunk
+	candidates      []Candidate
+	err             error
+	promptContext   []internal.Fact
+	contextExceeded bool
+}
+
 // Run distills every chunk pending in d via cli, applying cfg's confidence
 // gate deterministically in Go (the model's self-reported confidence is
 // advisory input to this hard check, not the enforcement mechanism).
@@ -233,42 +302,120 @@ type Result struct {
 // distill is a manual, non-time-boxed command, explicitly exempt from
 // mine's 50s/Stop-hook budget. The passed ctx still governs overall
 // cancellation (e.g. Ctrl-C) between chunks.
+//
+// cfg.Concurrency workers fetch existing-facts context and call cli.Distill
+// (the network-bound step) in parallel; every DB write (InsertFact,
+// SupersedeFact, MarkChunkDistilled) happens sequentially in this function's
+// own goroutine as outcomes arrive, so SQLite never sees concurrent writers.
+// A side effect: "current facts" context fed to concurrently-in-flight
+// chunks may be a few facts stale relative to strictly sequential Run — the
+// same tradeoff any batched/parallel supersession pipeline makes.
+//
+// A chunk whose Distill call errors is retried up to cfg.MaxRetries times
+// with retryBackoff between attempts, still within this same call — Ollama
+// cloud returns a plain 429 (no Retry-After) once concurrent in-flight
+// requests exceed roughly 20, and without this a high-concurrency run loses
+// a large fraction of its chunks to rate limiting instead of just slowing
+// down. A chunk still failing after the retry budget is left unmarked, same
+// as before — picked up on the next Run.
 func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, error) {
 	var res Result
 	pending, err := db.ChunksWithoutFacts(d)
 	if err != nil {
 		return res, err
 	}
-	for _, p := range pending {
-		if ctx.Err() != nil {
-			return res, ctx.Err()
-		}
-		existing, err := db.CurrentFacts(d, cfg.ContextCap+1)
-		if err != nil {
-			return res, err
-		}
-		// ContextCap exceeded: omit context and skip auto-supersession for
-		// this call — an oversized context would blow the prompt budget
-		// and the model has nothing reliable to judge supersession against.
-		contextExceeded := len(existing) > cfg.ContextCap
-		promptContext := existing
-		if contextExceeded {
-			promptContext = nil
-		}
-		allowedIDs := make(map[int64]bool, len(promptContext))
-		for _, f := range promptContext {
-			allowedIDs[f.ID] = true
-		}
+	if cfg.Limit > 0 && len(pending) > cfg.Limit {
+		pending = pending[:cfg.Limit]
+	}
+	total := len(pending)
 
-		// context.Background(), not ctx: distill is exempt from the
-		// caller's deadline (see doc comment above) — ctx only governs
-		// cancellation between chunks, checked via ctx.Err() above.
-		candidates, err := cli.Distill(context.Background(), p.Content, promptContext)
-		if err != nil {
-			res.Failed++
-			continue // chunk not marked — retried on the next run
+	concurrency := cfg.Concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	jobs := make(chan db.PendingFactChunk)
+	outcomes := make(chan fetchOutcome)
+
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				existing, err := db.CurrentFacts(d, cfg.ContextCap+1)
+				if err != nil {
+					outcomes <- fetchOutcome{chunk: p, err: err}
+					continue
+				}
+				// ContextCap exceeded: omit context and skip
+				// auto-supersession for this call — an oversized context
+				// would blow the prompt budget and the model has nothing
+				// reliable to judge supersession against.
+				contextExceeded := len(existing) > cfg.ContextCap
+				promptContext := existing
+				if contextExceeded {
+					promptContext = nil
+				}
+				// context.Background(), not ctx: distill is exempt from the
+				// caller's deadline (see doc comment above) — ctx only
+				// governs cancellation between chunks.
+				var candidates []Candidate
+				var derr error
+				for attempt := 0; ; attempt++ {
+					candidates, derr = cli.Distill(context.Background(), p.Content, promptContext)
+					if derr == nil || attempt >= cfg.MaxRetries {
+						break
+					}
+					select {
+					case <-time.After(retryBackoff(attempt)):
+					case <-ctx.Done():
+					}
+					if ctx.Err() != nil {
+						break
+					}
+				}
+				outcomes <- fetchOutcome{
+					chunk: p, candidates: candidates, err: derr,
+					promptContext: promptContext, contextExceeded: contextExceeded,
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, p := range pending {
+			select {
+			case jobs <- p:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(outcomes)
+	}()
+
+	done := 0
+	for oc := range outcomes {
+		done++
+		if oc.err != nil {
+			res.Failed++ // chunk not marked — retried on the next run
+			if cfg.OnProgress != nil {
+				cfg.OnProgress(done, total, res)
+			}
+			continue
 		}
 		res.ChunksDistilled++
+
+		allowedIDs := make(map[int64]bool, len(oc.promptContext))
+		for _, f := range oc.promptContext {
+			allowedIDs[f.ID] = true
+		}
 
 		now := time.Now().UTC().Format(time.RFC3339)
 		// storeFailed tracks whether any candidate for this chunk hit a DB
@@ -277,7 +424,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		// retried on the next run, same as a Distill call failure above —
 		// a transient DB error must not permanently drop a candidate fact.
 		var storeFailed bool
-		for _, c := range candidates {
+		for _, c := range oc.candidates {
 			if c.Confidence < cfg.Threshold {
 				res.BelowThreshold++
 				continue
@@ -287,8 +434,8 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				Predicate:     c.Predicate,
 				Object:        c.Object,
 				Confidence:    c.Confidence,
-				SourceChunkID: p.ID,
-				SessionDate:   p.SessionDate,
+				SourceChunkID: oc.chunk.ID,
+				SessionDate:   oc.chunk.SessionDate,
 				CreatedAt:     now,
 			})
 			if err != nil {
@@ -297,7 +444,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				continue
 			}
 			res.FactsInserted++
-			if contextExceeded {
+			if oc.contextExceeded {
 				continue
 			}
 			for _, oldID := range c.SupersedesIDs {
@@ -317,12 +464,20 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				}
 			}
 		}
-		if storeFailed {
-			continue // chunk not marked — retried on the next run
+		if !storeFailed {
+			// A MarkChunkDistilled error here is a DB-level failure, not a
+			// content problem — the chunk is retried next run just like the
+			// other failure paths above, rather than aborting the fan-out.
+			if err := db.MarkChunkDistilled(d, oc.chunk.ID, now); err != nil {
+				res.Failed++
+			}
 		}
-		if err := db.MarkChunkDistilled(d, p.ID, now); err != nil {
-			return res, err
+		if cfg.OnProgress != nil {
+			cfg.OnProgress(done, total, res)
 		}
+	}
+	if ctx.Err() != nil {
+		return res, ctx.Err()
 	}
 	return res, nil
 }
