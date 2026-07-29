@@ -150,9 +150,16 @@ probe_provider() {
 # External-agent tier (own free tiers, independent of Ollama quota) —
 # optional, like the old cli block: an absent config key means there is
 # nothing to fail over to and a cloud outage aborts the run instead.
+# yq is the primary check; grep/awk fallback keeps Step 0 working on
+# hosts without yq (matching the yq-less fallback the script already
+# documents for the model-name reads a few lines below).
 EXTERNAL_AGENTS_EXIST="no"
-yq -e '.reviewers.external_agents' .claude/skills/fix-review/config.yaml >/dev/null 2>&1 \
-  && EXTERNAL_AGENTS_EXIST="yes"
+if command -v yq >/dev/null 2>&1; then
+  yq -e '.reviewers.external_agents' .claude/skills/fix-review/config.yaml >/dev/null 2>&1 \
+    && EXTERNAL_AGENTS_EXIST="yes"
+elif grep -q '^  external_agents:' .claude/skills/fix-review/config.yaml 2>/dev/null; then
+  EXTERNAL_AGENTS_EXIST="yes"
+fi
 
 if [ "$REVIEWER_SET" = "cloud" ] && ! probe_provider; then
   if [ "$EXTERNAL_AGENTS_EXIST" = "yes" ]; then
@@ -589,10 +596,26 @@ SPEEDUP=$(awk -v s="$SEQ_SUM_MS" -v w="$WALL_TIME_MS" \
 
 if [ "$ACTIVE_PROVIDER" = "external_agents" ]; then
   # Read back whichever tool actually won each round — round_N.meta line 1
-  # (set by try_external_agents / run_external_round's fallback).
-  MODELS_LIST="$(head -1 "$RUN_DIR/round_1.meta") | $(head -1 "$RUN_DIR/round_2.meta") | $(head -1 "$RUN_DIR/round_3.meta")"
+  # (set by try_external_agents / run_external_round's fallback). A round
+  # that fully failed gets a placeholder rather than the literal "none"
+  # string (which would otherwise show up in the summary as a "tool").
+  MODELS_LIST=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    [ -n "$MODELS_LIST" ] && MODELS_LIST+=" | "
+    t=$(head -1 "$RUN_DIR/round_${n}.meta" 2>/dev/null)
+    if [ "$t" = "none" ] || [ -z "$t" ]; then
+      MODELS_LIST+="(failed)"
+    else
+      MODELS_LIST+="$t"
+    fi
+  done
 else
-  MODELS_LIST="${MODEL_R1} | ${MODEL_R2} | ${MODEL_R3}"
+  MODELS_LIST=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    [ -n "$MODELS_LIST" ] && MODELS_LIST+=" | "
+    v="MODEL_R${n}"
+    MODELS_LIST+="${!v}"
+  done
 fi
 
 VOTE_BAND_REPORT=""
@@ -608,7 +631,25 @@ done
 
 FAILOVER_SECTION=""
 if [ -n "$FAILOVER_TIER" ]; then
-  agents_csv=$(for n in 1 2 3; do head -1 "$RUN_DIR/round_${n}.meta"; done | sort -u | paste -sd, -)
+  # List each round's winning tool, skipping fully-failed rounds (their
+  # meta line 1 is "none") and deduping so a 3-round cascade onto the
+  # same tool is shown as e.g. "omp x3" rather than just "omp" —
+  # matches MODELS_LIST's per-round fidelity in the summary above.
+  round_tools=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    t=$(head -1 "$RUN_DIR/round_${n}.meta" 2>/dev/null)
+    if [ "$t" != "none" ] && [ -n "$t" ]; then
+      round_tools+="$t"$'\n'
+    fi
+  done
+  agents_csv=$(printf '%s' "$round_tools" | awk '
+    NF { if (!seen[$0]++) order[++c]=$0; cnt[$0]++ }
+    END {
+      for (i=1; i<=c; i++) printf "%s%s x%d", (i==1?"":", "), order[i], cnt[order[i]]
+      print ""
+    }
+  ')
+  [ -z "$agents_csv" ] && agents_csv="(no tool returned output)"
   FAILOVER_SECTION=$(cat <<EOF
 
 ### ⚠️ Provider failover
