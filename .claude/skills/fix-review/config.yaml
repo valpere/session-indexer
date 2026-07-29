@@ -45,19 +45,26 @@ reviewers:
     round_3:
       model: granite3.3:8b      # local, no subscription needed
 
-  # CLI failover tier — engaged automatically when Ollama Cloud probe fails
-  # (401 invalid key, 429 quota exceeded, network error). Each agent is
-  # invoked in parallel (independent processes — no shared-engine
-  # bottleneck). The review prompt is piped to stdin; stdout is captured
-  # as the response. Non-JSON output or non-zero exit → 0 findings for
-  # that round (the whole run still proceeds). Per-agent timeout: 300s.
-  cli:
-    - { name: opencode,     cmd: "sh -c 'opencode run -m opencode/nemotron-3-super-free --format json \"$(cat)\"'" }
-    - { name: gemini,       cmd: "gemini --model gemini-2.5-flash-lite" }
-    - { name: codex,        cmd: "codex --dangerously-bypass-approvals-and-sandbox review -" }
-    - { name: cursor-agent, cmd: "cursor-agent --model auto" }
-    - { name: kilo,         cmd: "sh -c 'kilo run \"$(cat)\"'" }
-    - { name: agy,          cmd: "agy --print --model 'GPT-OSS 120B (Medium)' --dangerously-skip-permissions" }
+  # External-agent failover tier — engaged automatically when Ollama Cloud
+  # probe fails (401 invalid key, 429 quota exceeded, network error).
+  # Cascaded in this order via lib/agents.sh's try_external_agents (first
+  # tool that returns non-empty output wins); each adapter is invoked
+  # read-only (no edits, no shell execution) — see lib/agents.sh for the
+  # exact per-tool flags. Replaces the old ad-hoc reviewers.cli block
+  # (migrated 2026-08-20 per ~/wrk/common/skills/fix-review/lib/agents.sh,
+  # commit c6c0698): agy was dropped (evaluated 2026-07-29 — explores the
+  # filesystem instead of answering, in both --mode plan and unrestricted
+  # modes, not a prompt-wording problem); gemini was dropped (unverified,
+  # no canonical adapter — was never actually exercised as a failover
+  # path); codex now runs with --sandbox read-only instead of
+  # --dangerously-bypass-approvals-and-sandbox (full write access was
+  # never needed for a read-only reviewer).
+  external_agents:
+    - { tool: cursor-agent, model: auto }
+    - { tool: omp }
+    - { tool: codex }
+    - { tool: opencode, model: "opencode/nemotron-3-ultra-free" }
+    - { tool: kilo }
 
 # ---------------------------------------------------------------------------
 # Reviewer set (which reviewers.* block above to load)
