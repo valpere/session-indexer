@@ -52,14 +52,19 @@ reviewers:
   # read-only (no edits, no shell execution) — see lib/agents.sh for the
   # exact per-tool flags. Replaces the old ad-hoc reviewers.cli block
   # (migrated 2026-08-20 per ~/wrk/common/skills/fix-review/lib/agents.sh,
-  # commit c6c0698): agy was initially dropped on a misdiagnosis (the
-  # `--prompt "text"` invocation silently dropped the prompt because
-  # `--prompt` is a `--print` alias, not a value-taking option — agy
-  # explored the filesystem because it had no real task; the positional
-  # `-p "$(cat ...)"` form, verified 2026-07-30, restores its expected
-  # structured-JSON output and is now included); gemini was dropped
-  # (unverified, no canonical adapter — was never actually exercised as a
-  # failover path); codex now runs with --sandbox read-only instead of
+  # commit c6c0698): agy needs the prompt as a positional argument after
+  # `-p`, not via stdin (verified — stdin-only returns a generic greeting
+  # instead of answering) and not as the value of `--prompt`/`-p` (both
+  # are --print boolean aliases per `agy --help`; verified empirically
+  # 2026-07-30 that agy takes the trailing positional as its operand
+  # regardless of which alias triggered --print mode). The canonical
+  # `session-end.sh:try_agy()` pattern `agy -p "$(cat ...)" --model ...
+  # --mode plan` is what we use here, with display-form model names like
+  # "Gemini 3.5 Flash (Low)" accepted by agy verbatim. agy was
+  # initially excluded on the wrong assumption that --prompt vs -p
+  # behaved differently; gemini was dropped (unverified, no canonical
+  # adapter — was never actually exercised as a failover path); codex
+  # now runs with --sandbox read-only instead of
   # --dangerously-bypass-approvals-and-sandbox (full write access was
   # never needed for a read-only reviewer).
   external_agents:

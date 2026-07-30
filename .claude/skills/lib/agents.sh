@@ -37,10 +37,14 @@ agent_cursor_agent() {
 
 agent_agy() {
   local model="$1" prompt_file="$2"
-  # Unlike every other adapter here, the prompt MUST be a positional
-  # argument, not stdin/file-ref — verified 2026-07-30. --prompt is an
-  # alias for the --print boolean flag, not a value-taking option; the
-  # actual prompt text goes after -p as a trailing positional argument.
+  # Pass the prompt as a trailing positional argument after `-p`. agy's
+  # `-p` (and `--prompt`) are --print aliases in --help, but the actual
+  # positional-argument semantics take the prompt text as their operand —
+  # the same pattern session-end.sh's try_agy() has been using in
+  # production. Stdin-only invocation does NOT work (agy returns a
+  # generic 'I am currently running on ...' greeting instead of answering
+  # the prompt — verified 2026-07-30). `$(cat file)` strips any trailing
+  # newline from the prompt; agy ignores that for prompt content.
   agy -p "$(cat "$prompt_file")" --model "${model:-Gemini 3.5 Flash (Low)}" \
     --mode plan --output-format json 2>/dev/null \
     | jq -r '.response // empty'
