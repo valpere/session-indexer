@@ -52,15 +52,19 @@ reviewers:
   # read-only (no edits, no shell execution) — see lib/agents.sh for the
   # exact per-tool flags. Replaces the old ad-hoc reviewers.cli block
   # (migrated 2026-08-20 per ~/wrk/common/skills/fix-review/lib/agents.sh,
-  # commit c6c0698): agy was dropped (evaluated 2026-07-29 — explores the
-  # filesystem instead of answering, in both --mode plan and unrestricted
-  # modes, not a prompt-wording problem); gemini was dropped (unverified,
-  # no canonical adapter — was never actually exercised as a failover
-  # path); codex now runs with --sandbox read-only instead of
+  # commit c6c0698): agy was initially dropped on a misdiagnosis (the
+  # `--prompt "text"` invocation silently dropped the prompt because
+  # `--prompt` is a `--print` alias, not a value-taking option — agy
+  # explored the filesystem because it had no real task; the positional
+  # `-p "$(cat ...)"` form, verified 2026-07-30, restores its expected
+  # structured-JSON output and is now included); gemini was dropped
+  # (unverified, no canonical adapter — was never actually exercised as a
+  # failover path); codex now runs with --sandbox read-only instead of
   # --dangerously-bypass-approvals-and-sandbox (full write access was
   # never needed for a read-only reviewer).
   external_agents:
     - { tool: cursor-agent, model: auto }
+    - { tool: agy, model: "Gemini 3.5 Flash (Low)" }
     - { tool: omp }
     - { tool: codex }
     - { tool: opencode, model: "opencode/nemotron-3-ultra-free" }

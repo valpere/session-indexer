@@ -35,6 +35,17 @@ agent_cursor_agent() {
     | jq -r '.result // empty'
 }
 
+agent_agy() {
+  local model="$1" prompt_file="$2"
+  # Unlike every other adapter here, the prompt MUST be a positional
+  # argument, not stdin/file-ref — verified 2026-07-30. --prompt is an
+  # alias for the --print boolean flag, not a value-taking option; the
+  # actual prompt text goes after -p as a trailing positional argument.
+  agy -p "$(cat "$prompt_file")" --model "${model:-Gemini 3.5 Flash (Low)}" \
+    --mode plan --output-format json 2>/dev/null \
+    | jq -r '.response // empty'
+}
+
 agent_omp() {
   local model="$1" prompt_file="$2"
   # omp's own "@file" syntax for message content (not stdin).
@@ -79,6 +90,7 @@ run_external_agent() {
   local tool="$1" model="$2" prompt_file="$3"
   case "$tool" in
     cursor-agent) agent_cursor_agent "$model" "$prompt_file" ;;
+    agy)          agent_agy          "$model" "$prompt_file" ;;
     omp)          agent_omp          "$model" "$prompt_file" ;;
     codex)        agent_codex        "$model" "$prompt_file" ;;
     opencode)     agent_opencode     "$model" "$prompt_file" ;;
