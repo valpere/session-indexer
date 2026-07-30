@@ -118,12 +118,11 @@ MODEL_R3=$(yq -r ".reviewers.${REVIEWER_BLOCK}.round_3.model // \"\"" .claude/sk
 
 If `yq` is not available, fall back to grep/awk.
 
-**Probe Ollama Cloud + CLI failover** (only when `REVIEWER_SET=cloud`):
+**Probe Ollama Cloud + external-agent failover** (only when `REVIEWER_SET=cloud`):
 
 ```bash
-ACTIVE_PROVIDER=ollama     # "ollama" | "cli"
-CLI_AGENTS=()              # name|cmd entries populated on failover
-FAILOVER_TIER=""           # "" | "cli"
+ACTIVE_PROVIDER=ollama     # "ollama" | "external_agents"
+FAILOVER_TIER=""           # "" | "external_agents"
 FAILOVER_REASON=""
 
 probe_provider() {
@@ -148,20 +147,29 @@ probe_provider() {
   return 0
 }
 
+# External-agent tier (own free tiers, independent of Ollama quota) —
+# optional, like the old cli block: an absent config key means there is
+# nothing to fail over to and a cloud outage aborts the run instead.
+# yq is the primary check; grep/awk fallback keeps Step 0 working on
+# hosts without yq (matching the yq-less fallback the script already
+# documents for the model-name reads a few lines below).
+EXTERNAL_AGENTS_EXIST="no"
+if command -v yq >/dev/null 2>&1; then
+  yq -e '.reviewers.external_agents' .claude/skills/fix-review/config.yaml >/dev/null 2>&1 \
+    && EXTERNAL_AGENTS_EXIST="yes"
+elif grep -q '^  external_agents:' .claude/skills/fix-review/config.yaml 2>/dev/null; then
+  EXTERNAL_AGENTS_EXIST="yes"
+fi
+
 if [ "$REVIEWER_SET" = "cloud" ] && ! probe_provider; then
-  echo "⚠️  FAILOVER: Ollama Cloud unavailable (${FAILOVER_REASON}) — engaging CLI tier" >&2
-  count=$(yq '.reviewers.cli | length' .claude/skills/fix-review/config.yaml 2>/dev/null)
-  for ((i=0; i<count; i++)); do
-    name=$(yq -r ".reviewers.cli[$i].name" .claude/skills/fix-review/config.yaml)
-    cmd=$(yq -r  ".reviewers.cli[$i].cmd"  .claude/skills/fix-review/config.yaml)
-    CLI_AGENTS+=("${name}|${cmd}")
-  done
-  if [ "${#CLI_AGENTS[@]}" -eq 0 ]; then
-    echo "✗ CLI tier empty — cannot fail over. Aborting." >&2; exit 1
+  if [ "$EXTERNAL_AGENTS_EXIST" = "yes" ]; then
+    echo "⚠️  FAILOVER: Ollama Cloud unavailable (${FAILOVER_REASON}) — engaging external_agents tier" >&2
+    ACTIVE_PROVIDER=external_agents
+    FAILOVER_TIER=external_agents
+  else
+    echo "✗ Ollama Cloud unavailable (${FAILOVER_REASON}) and no external_agents tier configured — aborting." >&2
+    exit 1
   fi
-  ACTIVE_PROVIDER=cli
-  FAILOVER_TIER=cli
-  echo "⚠️  FAILOVER: using CLI tier ($(printf '%s ' "${CLI_AGENTS[@]%%|*}"))" >&2
 fi
 ```
 
@@ -366,27 +374,37 @@ run_round() {
     "${pt:-null}" "${ct:-null}" > "$RUN_DIR/round_${n}.meta"
 }
 
-run_cli_round() {
-  local n="$1" name="$2" cmd="$3"
-  local r_start r_end response
-  r_start=$(now_ms)
-  response=$(printf '%s' "$PROMPT" | timeout 300 sh -c "$cmd" 2>/dev/null) || response=""
-  r_end=$(now_ms)
-  printf '%s' "$response" > "$RUN_DIR/round_${n}.raw.txt"
-  printf '%s\n%s\n%s\n' "$name" "$((r_end - r_start))" "null null" \
-    > "$RUN_DIR/round_${n}.meta"
-}
-export -f run_round run_cli_round
+source .claude/skills/lib/agents.sh
 
-if [ "$ACTIVE_PROVIDER" = "cli" ]; then
-  n=1
-  for entry in "${CLI_AGENTS[@]}"; do
-    name="${entry%%|*}"; cmd="${entry#*|}"
-    run_cli_round "$n" "$name" "$cmd" &
-    n=$((n + 1))
-  done
+run_external_round() {
+  local n="$1"
+  local r_start r_end prompt_file
+  r_start=$(now_ms)
+  prompt_file=$(mktemp)
+  printf '%s\n\n%s' "$REVIEW_SYSTEM_MSG" "$PROMPT" > "$prompt_file"
+  if ! try_external_agents "$n" "$prompt_file" ".claude/skills/fix-review/config.yaml" "$RUN_DIR"; then
+    echo "✗ round ${n}: every external agent failed/empty — 0 findings" >&2
+    printf '[]' > "$RUN_DIR/round_${n}.raw.json"
+    printf 'none\n0\n' > "$RUN_DIR/round_${n}.meta"
+  fi
+  rm -f "$prompt_file"
+  r_end=$(now_ms)
+  # try_external_agents already wrote round_${n}.meta with duration "0" on
+  # success — fix up the timing half now the real elapsed time is known.
+  if [ -f "$RUN_DIR/round_${n}.failover" ]; then
+    local winning_tool; winning_tool=$(head -1 "$RUN_DIR/round_${n}.meta")
+    printf '%s\n%s\n' "$winning_tool" "$((r_end - r_start))" > "$RUN_DIR/round_${n}.meta"
+  fi
+}
+export -f run_round run_external_round rest_post now_ms run_external_agent \
+  try_external_agents agent_cursor_agent agent_omp agent_codex agent_opencode agent_kilo
+
+if [ "$ACTIVE_PROVIDER" = "external_agents" ]; then
+  run_external_round 1 &
+  run_external_round 2 &
+  run_external_round 3 &
   wait
-  NUM_ROUNDS=$((n - 1))
+  NUM_ROUNDS=3
 else
   run_round 1 "$MODEL_R1" &
   run_round 2 "$MODEL_R2" &
@@ -400,9 +418,20 @@ WALL_TIME_MS=$((WALL_END_MS - WALL_START_MS))
 ```
 
 > If `export -f` doesn't propagate (older bash, restricted shells), inline
-> the `run_round` body inside `bash -c '...' &` blocks. Contract: each
-> background job writes `round_N.raw.json` + `round_N.meta`
-> (3 lines: `model\nduration_ms\nprompt_tokens completion_tokens`).
+> the `run_round`/`run_external_round` bodies inside `bash -c '...' &`
+> blocks. Contract: each background job writes `round_N.raw.json` +
+> `round_N.meta` (Ollama rounds: 3 lines — `model\nduration_ms\nprompt_tokens
+> completion_tokens`; external_agents rounds: 2 lines — `tool\nduration_ms`,
+> no token counts since these tools don't report them).
+>
+> **Failover chain**: unlike per-round cascading, session-indexer decides
+> `ACTIVE_PROVIDER` once for the whole run at Step 0 (a single upfront
+> probe, not per-round) — if cloud is down, all three rounds go through
+> `try_external_agents`, which walks `reviewers.external_agents` in
+> config order and keeps the first tool that returns non-empty output.
+> Each round cascades independently starting from the same tool[0], so a
+> full outage can converge all three rounds onto the same external tool
+> — degraded diversity, but still a real review instead of zero coverage.
 
 ---
 
@@ -413,8 +442,11 @@ parse_round() {
   local n="$1"
   local model content
   model=$(head -1 "$RUN_DIR/round_${n}.meta")
-  if [ "$ACTIVE_PROVIDER" = "cli" ]; then
-    content=$(cat "$RUN_DIR/round_${n}.raw.txt")
+  if [ "$ACTIVE_PROVIDER" = "external_agents" ]; then
+    # try_external_agents already unwraps each tool's own output envelope —
+    # round_${n}.raw.json holds plain extracted text, not an Ollama
+    # {"message":{"content":...}} wrapper.
+    content=$(cat "$RUN_DIR/round_${n}.raw.json")
   else
     content=$(jq -r '.message.content // empty' "$RUN_DIR/round_${n}.raw.json")
   fi
@@ -562,10 +594,28 @@ done
 SPEEDUP=$(awk -v s="$SEQ_SUM_MS" -v w="$WALL_TIME_MS" \
   'BEGIN{ if (w>0) printf "%.2f", s/w; else print "n/a" }')
 
-if [ "$ACTIVE_PROVIDER" = "cli" ]; then
-  MODELS_LIST=$(printf '%s | ' "${CLI_AGENTS[@]%%|*}" | sed 's/ | $//')
+if [ "$ACTIVE_PROVIDER" = "external_agents" ]; then
+  # Read back whichever tool actually won each round — round_N.meta line 1
+  # (set by try_external_agents / run_external_round's fallback). A round
+  # that fully failed gets a placeholder rather than the literal "none"
+  # string (which would otherwise show up in the summary as a "tool").
+  MODELS_LIST=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    [ -n "$MODELS_LIST" ] && MODELS_LIST+=" | "
+    t=$(head -1 "$RUN_DIR/round_${n}.meta" 2>/dev/null)
+    if [ "$t" = "none" ] || [ -z "$t" ]; then
+      MODELS_LIST+="(failed)"
+    else
+      MODELS_LIST+="$t"
+    fi
+  done
 else
-  MODELS_LIST="${MODEL_R1} | ${MODEL_R2} | ${MODEL_R3}"
+  MODELS_LIST=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    [ -n "$MODELS_LIST" ] && MODELS_LIST+=" | "
+    v="MODEL_R${n}"
+    MODELS_LIST+="${!v}"
+  done
 fi
 
 VOTE_BAND_REPORT=""
@@ -581,7 +631,25 @@ done
 
 FAILOVER_SECTION=""
 if [ -n "$FAILOVER_TIER" ]; then
-  agents_csv=$(printf '%s, ' "${CLI_AGENTS[@]%%|*}" | sed 's/, $//')
+  # List each round's winning tool, skipping fully-failed rounds (their
+  # meta line 1 is "none") and deduping so a 3-round cascade onto the
+  # same tool is shown as e.g. "omp x3" rather than just "omp" —
+  # matches MODELS_LIST's per-round fidelity in the summary above.
+  round_tools=""
+  for n in $(seq 1 "$NUM_ROUNDS"); do
+    t=$(head -1 "$RUN_DIR/round_${n}.meta" 2>/dev/null)
+    if [ "$t" != "none" ] && [ -n "$t" ]; then
+      round_tools+="$t"$'\n'
+    fi
+  done
+  agents_csv=$(printf '%s' "$round_tools" | awk '
+    NF { if (!seen[$0]++) order[++c]=$0; cnt[$0]++ }
+    END {
+      for (i=1; i<=c; i++) printf "%s%s x%d", (i==1?"":", "), order[i], cnt[order[i]]
+      print ""
+    }
+  ')
+  [ -z "$agents_csv" ] && agents_csv="(no tool returned output)"
   FAILOVER_SECTION=$(cat <<EOF
 
 ### ⚠️ Provider failover
@@ -592,7 +660,7 @@ Reason:    ${FAILOVER_REASON}
 Agents:    ${agents_csv}
 
 Action: regenerate OLLAMA_API_KEY at https://ollama.com/settings/keys
-or adjust reviewers.cli in config.yaml.
+or adjust reviewers.external_agents in config.yaml.
 EOF
 )
 fi
