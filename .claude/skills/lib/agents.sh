@@ -35,6 +35,21 @@ agent_cursor_agent() {
     | jq -r '.result // empty'
 }
 
+agent_agy() {
+  local model="$1" prompt_file="$2"
+  # Pass the prompt as a trailing positional argument after `-p`. agy's
+  # `-p` (and `--prompt`) are --print aliases in --help, but the actual
+  # positional-argument semantics take the prompt text as their operand —
+  # the same pattern session-end.sh's try_agy() has been using in
+  # production. Stdin-only invocation does NOT work (agy returns a
+  # generic 'I am currently running on ...' greeting instead of answering
+  # the prompt — verified 2026-07-30). `$(cat file)` strips any trailing
+  # newline from the prompt; agy ignores that for prompt content.
+  agy -p "$(cat "$prompt_file")" --model "${model:-Gemini 3.5 Flash (Low)}" \
+    --mode plan --output-format json 2>/dev/null \
+    | jq -r '.response // empty'
+}
+
 agent_omp() {
   local model="$1" prompt_file="$2"
   # omp's own "@file" syntax for message content (not stdin).
@@ -79,6 +94,7 @@ run_external_agent() {
   local tool="$1" model="$2" prompt_file="$3"
   case "$tool" in
     cursor-agent) agent_cursor_agent "$model" "$prompt_file" ;;
+    agy)          agent_agy          "$model" "$prompt_file" ;;
     omp)          agent_omp          "$model" "$prompt_file" ;;
     codex)        agent_codex        "$model" "$prompt_file" ;;
     opencode)     agent_opencode     "$model" "$prompt_file" ;;
