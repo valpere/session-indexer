@@ -86,7 +86,8 @@ func main() {
 				return err
 			}
 			defer d.Close()
-			res, used, err := search.Search(d, embed.NewClient(), args[0], limit)
+			emb := embed.NewClient()
+			res, used, err := search.Search(d, emb, args[0], limit)
 			if err != nil {
 				return err
 			}
@@ -97,6 +98,24 @@ func main() {
 					fmt.Fprintf(os.Stderr,
 						"warn: %d chunks not yet embedded — results may be incomplete; run: session-indexer embed --db %s\n",
 						st.Pending, dbPath)
+				}
+				// Warn when rows exist under a different model tag than the
+				// one currently configured — cosineSearch filters those out
+				// entirely rather than silently mis-scoring them, so they're
+				// invisible to search until `embed` re-embeds them.
+				if models, e := db.EmbeddingModels(d); e == nil {
+					current := embed.ModelTag(emb)
+					var otherCount int
+					for _, mc := range models {
+						if mc.Model != current {
+							otherCount += mc.Count
+						}
+					}
+					if otherCount > 0 {
+						fmt.Fprintf(os.Stderr,
+							"warn: %d chunks embedded with a different model (current: %s) — excluded from results; run: session-indexer embed --db %s\n",
+							otherCount, current, dbPath)
+					}
 				}
 			}
 			return printResults(res, used, asJSON)
@@ -136,6 +155,9 @@ func main() {
 			}
 			fmt.Printf("Sessions indexed: %d\nChunks total:     %d\nWith embeddings:  %d (%d pending)\nFacts current:    %d\nPending distill:  %d\nOldest entry:     %s\nNewest entry:     %s\nDB size:          %s\n",
 				st.Sessions, st.Chunks, st.Embedded, st.Pending, st.Facts, st.PendingDistill, st.Oldest, st.Newest, st.DBSize)
+			for _, mc := range st.EmbeddingModels {
+				fmt.Printf("  embedding model: %-30s %d chunks\n", mc.Model, mc.Count)
+			}
 			return nil
 		},
 	}
@@ -321,7 +343,8 @@ func runEmbed(dbPath string) error {
 	if !emb.Available() {
 		return fmt.Errorf("ollama unavailable — start it and pull bge-m3:latest")
 	}
-	pending, err := db.ChunksWithoutEmbeddings(d)
+	modelTag := embed.ModelTag(emb)
+	pending, err := db.ChunksNeedingEmbedding(d, modelTag)
 	if err != nil {
 		return err
 	}
@@ -332,7 +355,7 @@ func runEmbed(dbPath string) error {
 			failed++
 			continue
 		}
-		if err := db.InsertEmbedding(d, p.ID, embed.EncodeVector(vec)); err != nil {
+		if err := db.InsertEmbedding(d, p.ID, embed.EncodeVector(vec), modelTag); err != nil {
 			failed++
 			continue
 		}

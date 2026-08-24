@@ -70,6 +70,7 @@ func Run(ctx context.Context, dbPath, jsonlPath string, emb embed.Embedder) (Res
 
 	// Phase 2: embed new chunks, respecting the ctx deadline. Once ctx is done,
 	// remaining chunks are deferred (not embedded) — never abort the mine.
+	modelTag := embed.ModelTag(emb)
 	for _, p := range pending {
 		if ctx.Err() != nil {
 			res.Deferred++
@@ -80,7 +81,7 @@ func Run(ctx context.Context, dbPath, jsonlPath string, emb embed.Embedder) (Res
 			res.Skipped++
 			continue
 		}
-		if err := db.InsertEmbedding(d, p.id, embed.EncodeVector(vec)); err != nil {
+		if err := db.InsertEmbedding(d, p.id, embed.EncodeVector(vec), modelTag); err != nil {
 			res.Skipped++
 		} else {
 			res.Embedded++

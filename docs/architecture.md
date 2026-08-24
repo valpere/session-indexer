@@ -408,6 +408,8 @@ pull the distill model (OLLAMA_DISTILL_MODEL)`, matching NFR-1.
 
 **2026-07-18** — Added the facts layer (`distill`, `facts search/get/related/supersede`), `SchemaVersion` "1" → "2". Existing DBs must be deleted and re-mined (no migration framework, by design — see NFR-2).
 
+**2026-08-24** — Added a `model` column to `embeddings`, `SchemaVersion` "2" → "3". Existing DBs must be deleted and re-mined (same policy as above). Prerequisite for supporting a second embedding provider (OpenRouter, alongside Ollama): search now filters to the currently configured model's rows and warns on a mismatch instead of silently mis-scoring vectors of a different dimensionality; `session-indexer embed` re-embeds foreign-model rows in place, so a *future* provider/model switch no longer needs a wipe (only this one-time schema bump does).
+
 ---
 
 ## File Layout

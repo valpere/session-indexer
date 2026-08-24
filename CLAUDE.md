@@ -64,6 +64,8 @@ Schema version stored in `meta` table (`key='schema_version'`). On open: if vers
 
 Dedup key: `UNIQUE(session_id, message_index, chunk_index)` — `INSERT OR IGNORE` makes `mine` idempotent.
 
+`embeddings` rows carry a `model` column, tagged `"<provider>:<model>"` (e.g. `ollama:bge-m3:latest`) via `embed.ModelTag`. Search filters to the currently configured model's rows only and warns (doesn't silently mis-score) when other-model rows exist — `cosine()` can't tell "genuinely dissimilar" from "wrong dimensionality." `embed.ModelTag`/`ChunksNeedingEmbedding` (`internal/db/db.go`) mean switching the embedding model or provider no longer requires a DB wipe: `session-indexer embed` re-embeds the foreign-model rows in place.
+
 ### JSONL Parsing
 
 Extract `user` and `assistant` turns where `isMeta=false`. Skip XML/HTML (`<`), slash commands (`/\w+`), and content <30 chars after stripping. Truncate any single tool block to 2KB. Chunk messages at 1500 chars on paragraph boundaries.

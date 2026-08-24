@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/valpere/session-indexer/internal"
+	"github.com/valpere/session-indexer/internal/db"
 	"github.com/valpere/session-indexer/internal/embed"
 )
 
@@ -40,7 +41,13 @@ func cosineSearch(d *sql.DB, emb embed.Embedder, query string, limit int) ([]int
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
-	rows, err := d.Query(`SELECT chunk_id, vector FROM embeddings`)
+	// Filtered to the currently configured model's rows only — mixing
+	// vectors from a different provider/model would compare incompatible
+	// dimensions. cosine() already zero-scores a length mismatch rather
+	// than erroring, so an unfiltered scan would silently sort those rows
+	// to the bottom instead of excluding them with a visible warning (see
+	// main.go's post-Search EmbeddingModels check).
+	rows, err := d.Query(`SELECT chunk_id, vector FROM embeddings WHERE model = ?`, embed.ModelTag(emb))
 	if err != nil {
 		return nil, fmt.Errorf("load embeddings: %w", err)
 	}
@@ -137,15 +144,16 @@ func cosine(a, b []float32) float64 {
 
 // Stats describes index state for the stats subcommand.
 type Stats struct {
-	Sessions       int
-	Chunks         int
-	Embedded       int
-	Pending        int
-	Facts          int // currently valid (non-tombstoned) facts
-	PendingDistill int // chunks not yet through distill
-	Oldest         string
-	Newest         string
-	DBSize         string // human-readable on-disk size, e.g. "4.2 MB"
+	Sessions        int
+	Chunks          int
+	Embedded        int
+	Pending         int
+	EmbeddingModels []db.ModelCount // distinct model tags present, for spotting a provider/model mismatch
+	Facts           int             // currently valid (non-tombstoned) facts
+	PendingDistill  int             // chunks not yet through distill
+	Oldest          string
+	Newest          string
+	DBSize          string // human-readable on-disk size, e.g. "4.2 MB"
 }
 
 // GetStats reports index counts, date range, and on-disk DB size. dbPath is
@@ -163,6 +171,9 @@ func GetStats(d *sql.DB, dbPath string) (Stats, error) {
 		return s, err
 	}
 	s.Pending = s.Chunks - s.Embedded
+	if models, err := db.EmbeddingModels(d); err == nil {
+		s.EmbeddingModels = models
+	}
 	if err := q(`SELECT COUNT(*) FROM facts WHERE until IS NULL`, &s.Facts); err != nil {
 		return s, err
 	}

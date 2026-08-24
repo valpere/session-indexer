@@ -11,7 +11,7 @@ import (
 )
 
 // SchemaVersion is the schema the binary expects. Bump on any DDL change.
-const SchemaVersion = "2"
+const SchemaVersion = "3"
 
 //go:embed schema.sql
 var schemaSQL string
@@ -67,29 +67,37 @@ func InsertChunk(d *sql.DB, c internal.Chunk) (id int64, inserted bool, err erro
 	return id, true, nil
 }
 
-// InsertEmbedding stores the float32 BLOB for a chunk (idempotent).
-func InsertEmbedding(d *sql.DB, chunkID int64, vector []byte) error {
+// InsertEmbedding stores the float32 BLOB for a chunk (idempotent). model is
+// the "<provider>:<model>" tag identifying what produced vector — see
+// ChunksNeedingEmbedding and internal/search's per-model filtering, which
+// depend on this tag to keep vectors from different providers/models from
+// being silently compared against each other.
+func InsertEmbedding(d *sql.DB, chunkID int64, vector []byte, model string) error {
 	_, err := d.Exec(
-		`INSERT OR REPLACE INTO embeddings(chunk_id, vector) VALUES (?, ?)`,
-		chunkID, vector)
+		`INSERT OR REPLACE INTO embeddings(chunk_id, vector, model) VALUES (?, ?, ?)`,
+		chunkID, vector, model)
 	if err != nil {
 		return fmt.Errorf("insert embedding: %w", err)
 	}
 	return nil
 }
 
-// PendingChunk is a chunk lacking an embedding.
+// PendingChunk is a chunk lacking an embedding, or one embedded by a
+// different model than currentModel.
 type PendingChunk struct {
 	ID      int64
 	Content string
 }
 
-// ChunksWithoutEmbeddings lists chunks with no embeddings row.
-func ChunksWithoutEmbeddings(d *sql.DB) ([]PendingChunk, error) {
+// ChunksNeedingEmbedding lists chunks with no embeddings row, or whose
+// existing embedding's model tag differs from currentModel — the latter
+// case lets a provider/model switch re-embed the affected rows in place
+// via InsertEmbedding's INSERT OR REPLACE, instead of requiring a DB wipe.
+func ChunksNeedingEmbedding(d *sql.DB, currentModel string) ([]PendingChunk, error) {
 	rows, err := d.Query(
 		`SELECT c.id, c.content FROM chunks c
 		 LEFT JOIN embeddings e ON e.chunk_id = c.id
-		 WHERE e.chunk_id IS NULL`)
+		 WHERE e.chunk_id IS NULL OR e.model != ?`, currentModel)
 	if err != nil {
 		return nil, fmt.Errorf("query pending: %w", err)
 	}
@@ -101,6 +109,32 @@ func ChunksWithoutEmbeddings(d *sql.DB) ([]PendingChunk, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ModelCount is one distinct embedding model tag and how many rows have it.
+type ModelCount struct {
+	Model string
+	Count int
+}
+
+// EmbeddingModels reports the distinct model tags present in embeddings and
+// their row counts — used to warn when a search would exclude rows embedded
+// by a model other than the currently configured one.
+func EmbeddingModels(d *sql.DB) ([]ModelCount, error) {
+	rows, err := d.Query(`SELECT model, COUNT(*) FROM embeddings GROUP BY model`)
+	if err != nil {
+		return nil, fmt.Errorf("query embedding models: %w", err)
+	}
+	defer rows.Close()
+	var out []ModelCount
+	for rows.Next() {
+		var mc ModelCount
+		if err := rows.Scan(&mc.Model, &mc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, mc)
 	}
 	return out, rows.Err()
 }

@@ -109,6 +109,30 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	return out.Embeddings[0], nil
 }
 
+// ModelTag identifies which provider/model produced an Embedder's vectors,
+// as "<provider>:<model>" (e.g. "ollama:bge-m3:latest"). Stored per-row in
+// the embeddings table so search can filter to the currently configured
+// model and warn about rows from a different one, instead of silently
+// scoring mismatched-dimension vectors as 0. A package-level type switch,
+// not an Embedder interface method — widening the interface would break
+// the stubEmbedder test doubles in internal/search and internal/mine.
+//
+// An unrecognized implementation tags as "unknown:<Go type>" (via %T), not
+// a shared literal "unknown" — two different unrecognized Embedders (e.g.
+// two distinct test doubles, or a future provider added without a case
+// here) must never collide under the same tag, or ChunksNeedingEmbedding
+// and cosineSearch would treat their — potentially incompatible-dimension
+// — vectors as interchangeable, the exact class of bug this tag exists to
+// prevent.
+func ModelTag(e Embedder) string {
+	switch c := e.(type) {
+	case *Client:
+		return "ollama:" + c.model
+	default:
+		return fmt.Sprintf("unknown:%T", e)
+	}
+}
+
 // EncodeVector serializes floats as little-endian float32 bytes.
 func EncodeVector(v []float32) []byte {
 	buf := make([]byte, 4*len(v))
