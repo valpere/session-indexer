@@ -72,12 +72,12 @@ func TestOpenVersionMismatch(t *testing.T) {
 	}
 }
 
-func TestChunksWithoutEmbeddingsEmptyDB(t *testing.T) {
+func TestChunksNeedingEmbeddingEmptyDB(t *testing.T) {
 	d, _ := Open(tempDB(t))
 	defer d.Close()
-	pending, err := ChunksWithoutEmbeddings(d)
+	pending, err := ChunksNeedingEmbedding(d, "ollama:bge-m3:latest")
 	if err != nil {
-		t.Fatalf("ChunksWithoutEmbeddings on empty DB: %v", err)
+		t.Fatalf("ChunksNeedingEmbedding on empty DB: %v", err)
 	}
 	if len(pending) != 0 {
 		t.Fatalf("empty DB has %d pending chunks, want 0", len(pending))
@@ -91,10 +91,10 @@ func TestInsertEmbeddingReplacement(t *testing.T) {
 	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
 		MessageIndex: 0, ChunkIndex: 0, Content: "test chunk content here", CreatedAt: "2026-06-25T10:00:00Z"}
 	id, _, _ := InsertChunk(d, c)
-	if err := InsertEmbedding(d, id, []byte{1, 0, 0, 0}); err != nil {
+	if err := InsertEmbedding(d, id, []byte{1, 0, 0, 0}, "ollama:bge-m3:latest"); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
-	if err := InsertEmbedding(d, id, []byte{2, 0, 0, 0}); err != nil {
+	if err := InsertEmbedding(d, id, []byte{2, 0, 0, 0}, "ollama:bge-m3:latest"); err != nil {
 		t.Fatalf("second insert (replace): %v", err)
 	}
 	var count int
@@ -115,16 +115,70 @@ func TestInsertEmbeddingAndPendingList(t *testing.T) {
 	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
 		MessageIndex: 0, ChunkIndex: 0, Content: "needs an embedding here", CreatedAt: "2026-06-25T10:00:00Z"}
 	id, _, _ := InsertChunk(d, c)
-	pending, err := ChunksWithoutEmbeddings(d)
+	pending, err := ChunksNeedingEmbedding(d, "ollama:bge-m3:latest")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending before = %d err=%v, want 1", len(pending), err)
 	}
-	if err := InsertEmbedding(d, id, []byte{1, 2, 3, 4}); err != nil {
+	if err := InsertEmbedding(d, id, []byte{1, 2, 3, 4}, "ollama:bge-m3:latest"); err != nil {
 		t.Fatalf("InsertEmbedding: %v", err)
 	}
-	pending, _ = ChunksWithoutEmbeddings(d)
+	pending, _ = ChunksNeedingEmbedding(d, "ollama:bge-m3:latest")
 	if len(pending) != 0 {
 		t.Fatalf("pending after = %d, want 0", len(pending))
+	}
+}
+
+func TestChunksNeedingEmbeddingIncludesForeignModel(t *testing.T) {
+	// A chunk embedded under a different model tag than currentModel must
+	// come back as pending — this is what lets a provider/model switch
+	// re-embed in place instead of requiring a DB wipe.
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
+		MessageIndex: 0, ChunkIndex: 0, Content: "embedded under an old model", CreatedAt: "2026-06-25T10:00:00Z"}
+	id, _, _ := InsertChunk(d, c)
+	if err := InsertEmbedding(d, id, []byte{1, 2, 3, 4}, "ollama:bge-m3:latest"); err != nil {
+		t.Fatalf("InsertEmbedding: %v", err)
+	}
+	pending, err := ChunksNeedingEmbedding(d, "openrouter:some-model")
+	if err != nil {
+		t.Fatalf("ChunksNeedingEmbedding: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != id {
+		t.Fatalf("pending = %+v, want the foreign-model chunk %d", pending, id)
+	}
+	// Same-model chunk must NOT come back as pending.
+	pending, _ = ChunksNeedingEmbedding(d, "ollama:bge-m3:latest")
+	if len(pending) != 0 {
+		t.Fatalf("pending for matching model = %d, want 0", len(pending))
+	}
+}
+
+func TestEmbeddingModels(t *testing.T) {
+	d, _ := Open(tempDB(t))
+	defer d.Close()
+	c1 := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
+		MessageIndex: 0, ChunkIndex: 0, Content: "first chunk content here", CreatedAt: "2026-06-25T10:00:00Z"}
+	c2 := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
+		MessageIndex: 1, ChunkIndex: 0, Content: "second chunk content here", CreatedAt: "2026-06-25T10:00:00Z"}
+	id1, _, _ := InsertChunk(d, c1)
+	id2, _, _ := InsertChunk(d, c2)
+	if err := InsertEmbedding(d, id1, []byte{1, 2, 3, 4}, "ollama:bge-m3:latest"); err != nil {
+		t.Fatalf("InsertEmbedding 1: %v", err)
+	}
+	if err := InsertEmbedding(d, id2, []byte{5, 6, 7, 8}, "openrouter:some-model"); err != nil {
+		t.Fatalf("InsertEmbedding 2: %v", err)
+	}
+	models, err := EmbeddingModels(d)
+	if err != nil {
+		t.Fatalf("EmbeddingModels: %v", err)
+	}
+	counts := map[string]int{}
+	for _, mc := range models {
+		counts[mc.Model] = mc.Count
+	}
+	if counts["ollama:bge-m3:latest"] != 1 || counts["openrouter:some-model"] != 1 {
+		t.Fatalf("counts = %+v, want 1 each for the two distinct models", counts)
 	}
 }
 

@@ -2,7 +2,7 @@ CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-INSERT INTO meta(key, value) VALUES ('schema_version', '2');
+INSERT INTO meta(key, value) VALUES ('schema_version', '3');
 
 CREATE TABLE chunks (
     id            INTEGER PRIMARY KEY,
@@ -31,7 +31,8 @@ END;
 
 CREATE TABLE embeddings (
     chunk_id  INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
-    vector    BLOB    NOT NULL
+    vector    BLOB    NOT NULL,
+    model     TEXT    NOT NULL
 );
 
 CREATE UNIQUE INDEX idx_chunks_dedup

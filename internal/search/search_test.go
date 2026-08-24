@@ -38,11 +38,12 @@ func seed(t *testing.T, emb embed.Embedder) string {
 		{"ring buffer for the event queue avoids allocations", []float32{0, 0, 1}},
 		{"json schema config validation approach", []float32{1, 0, 0}},
 	}
+	modelTag := embed.ModelTag(emb)
 	for i, r := range rows {
 		c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
 			MessageIndex: i, ChunkIndex: 0, Content: r.content, CreatedAt: "2026-06-25T10:00:00Z"}
 		id, _, _ := db.InsertChunk(d, c)
-		db.InsertEmbedding(d, id, embed.EncodeVector(r.vec))
+		db.InsertEmbedding(d, id, embed.EncodeVector(r.vec), modelTag)
 	}
 	return dbp
 }
@@ -157,6 +158,44 @@ func TestCosineMismatchedLength(t *testing.T) {
 func TestCosineEmptyVectors(t *testing.T) {
 	if got := cosine(nil, nil); got != 0 {
 		t.Fatalf("cosine(nil, nil) = %v, want 0", got)
+	}
+}
+
+// TestSearchExcludesForeignModelRows: a row embedded under a different
+// model tag than the querying Embedder's must be excluded from cosine
+// results entirely, not scored 0 and sorted last — cosine() can't tell the
+// difference between "genuinely dissimilar" and "wrong dimensionality",
+// so cosineSearch filters by model tag before scoring at all.
+func TestSearchExcludesForeignModelRows(t *testing.T) {
+	emb := stubEmbedder{avail: true}
+	dbp := seed(t, emb) // both seeded rows tagged with ModelTag(emb) = "unknown"
+	d, _ := db.Open(dbp)
+	defer d.Close()
+
+	// A third chunk, embedded under a different model tag, should never
+	// appear in results for this embedder even though its vector would
+	// otherwise be the closest match.
+	c := internal.Chunk{SessionID: "s1", SessionDate: "2026-06-25", Role: "user",
+		MessageIndex: 2, ChunkIndex: 0, Content: "foreign model row, closest vector, must be excluded", CreatedAt: "2026-06-25T10:00:00Z"}
+	id, _, err := db.InsertChunk(d, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.InsertEmbedding(d, id, embed.EncodeVector([]float32{0, 0, 1}), "some-other-model"); err != nil {
+		t.Fatal(err)
+	}
+
+	res, used, err := Search(d, emb, "queue buffering", 5)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if !used {
+		t.Fatal("usedEmbeddings = false, want true")
+	}
+	for _, r := range res {
+		if r.Content == c.Content {
+			t.Fatalf("foreign-model row appeared in results: %+v", res)
+		}
 	}
 }
 
