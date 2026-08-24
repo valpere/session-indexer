@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly, off-peak, off a round number to avoid shared-runner congestion.
+    # Runs against the default branch (main) automatically. GitHub disables
+    # scheduled workflows on public repos after 60 days with no repository
+    # activity — low risk here given the active PR/Dependabot cadence, but
+    # worth knowing if this job ever silently stops running.
+    - cron: '17 6 * * 1'
 
 jobs:
   vulncheck:
