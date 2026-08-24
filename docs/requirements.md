@@ -137,7 +137,7 @@ both languages with equivalent quality.
 
 ## Constraints
 
-- Go 1.26.5+ (project language; patch-pinned in `go.mod` — `1.26.4` had GO-2026-5856, a `crypto/tls` ECH privacy leak fixed in `1.26.5`; see issue #31)
+- Go 1.26.6+ (project language; patch-pinned in `go.mod` — `1.26.5` had four stdlib CVEs reachable via `internal/distill`'s HTTP client, fixed in `1.26.6`; see issues #31 and #50)
 - SQLite via `modernc.org/sqlite` (pure Go, no CGO)
 - Ollama local: `bge-m3:latest` for embeddings (1024 dims)
 - Claude Code JSONL format: lines of JSON, `type` field discriminates records; `sessionId` field present in each record (used as session_id; fall back to filename stem if absent)
