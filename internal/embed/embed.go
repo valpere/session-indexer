@@ -116,13 +116,20 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 // scoring mismatched-dimension vectors as 0. A package-level type switch,
 // not an Embedder interface method — widening the interface would break
 // the stubEmbedder test doubles in internal/search and internal/mine.
-// Unrecognized Embedder implementations tag as "unknown".
+//
+// An unrecognized implementation tags as "unknown:<Go type>" (via %T), not
+// a shared literal "unknown" — two different unrecognized Embedders (e.g.
+// two distinct test doubles, or a future provider added without a case
+// here) must never collide under the same tag, or ChunksNeedingEmbedding
+// and cosineSearch would treat their — potentially incompatible-dimension
+// — vectors as interchangeable, the exact class of bug this tag exists to
+// prevent.
 func ModelTag(e Embedder) string {
 	switch c := e.(type) {
 	case *Client:
 		return "ollama:" + c.model
 	default:
-		return "unknown"
+		return fmt.Sprintf("unknown:%T", e)
 	}
 }
 
