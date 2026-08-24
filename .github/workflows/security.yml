@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly, off-peak, off a round number to avoid shared-runner congestion.
+    # Runs against the default branch (main) automatically.
+    - cron: '17 6 * * 1'
 
 jobs:
   vulncheck:
