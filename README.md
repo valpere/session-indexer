@@ -1,6 +1,7 @@
 # session-indexer
 
 [![CI](https://github.com/valpere/session-indexer/actions/workflows/ci.yml/badge.svg)](https://github.com/valpere/session-indexer/actions/workflows/ci.yml)
+[![session-indexer - Semantic search over your own Claude Code session history | Product Hunt](https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1230655&theme=light)](https://www.producthunt.com/products/session-indexer)
 
 Per-project semantic search over Claude Code session history. Indexes JSONL
 transcripts into a per-project SQLite store; retrieves via bge-m3 embeddings
