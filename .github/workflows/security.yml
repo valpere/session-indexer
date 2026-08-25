@@ -42,9 +42,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create automated-vulncheck-failure \
+          gh label create automated-vulncheck-failure --repo "${{ github.repository }}" --force \
             --description "Filed automatically by the scheduled govulncheck job" \
-            --color d73a4a 2>/dev/null || true
+            --color d73a4a
 
           open_count=$(gh issue list --repo "${{ github.repository }}" \
             --label automated-vulncheck-failure --state open \
