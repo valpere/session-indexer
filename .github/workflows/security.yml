@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
 
@@ -30,3 +31,29 @@ jobs:
 
       - name: Run govulncheck
         run: govulncheck ./...
+
+      - name: File issue on scheduled failure
+        # Only for the `schedule` trigger: push/pull_request failures already
+        # surface via normal PR/branch-protection checks, but nobody actively
+        # watches a scheduled run the way they watch their own PR. Dedup via
+        # the automated-vulncheck-failure label so a persistently broken
+        # check files one issue, not one per week.
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create automated-vulncheck-failure --repo "${{ github.repository }}" --force \
+            --description "Filed automatically by the scheduled govulncheck job" \
+            --color d73a4a
+
+          open_count=$(gh issue list --repo "${{ github.repository }}" \
+            --label automated-vulncheck-failure --state open \
+            --json number --jq 'length') || open_count=0
+
+          if [ "${open_count:-0}" -eq 0 ]; then
+            run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Scheduled govulncheck failed on $(date -u +%Y-%m-%d)" \
+              --label automated-vulncheck-failure \
+              --body "The weekly scheduled \`govulncheck\` run failed: ${run_url}"
+          fi
