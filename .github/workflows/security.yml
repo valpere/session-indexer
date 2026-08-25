@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
     steps:
       - uses: actions/checkout@v7
 
@@ -32,13 +31,21 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  notify-failure:
+    needs: vulncheck
+    # Only for the `schedule` trigger: push/pull_request failures already
+    # surface via normal PR/branch-protection checks, but nobody actively
+    # watches a scheduled run the way they watch their own PR. Dedup via
+    # the automated-vulncheck-failure label so a persistently broken
+    # check files one issue, not one per week. Split into its own job (not
+    # a step in vulncheck) so `issues: write` is only ever granted here,
+    # never on push/pull_request runs of vulncheck.
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
       - name: File issue on scheduled failure
-        # Only for the `schedule` trigger: push/pull_request failures already
-        # surface via normal PR/branch-protection checks, but nobody actively
-        # watches a scheduled run the way they watch their own PR. Dedup via
-        # the automated-vulncheck-failure label so a persistently broken
-        # check files one issue, not one per week.
-        if: failure() && github.event_name == 'schedule'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
