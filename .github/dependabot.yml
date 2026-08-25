@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # govulncheck is pinned via go.mod's `tool` directive (#61), which lands
+    # it in `require` as `// indirect` (golang.org/x/vuln v1.7.0). No `allow`
+    # rule needed: Dependabot's default (no `allow` block) already tracks
+    # both direct and indirect go.mod dependencies, so this entry gets
+    # picked up like any other indirect dep. dependabot-core lacks native
+    # `tool`-directive support (issue #12050 / PR #13655, both open as of
+    # 2026-08-25), but that only affects the `tool` marker line itself —
+    # the version-bump tracking goes through the ordinary `require` scan.
 
   - package-ecosystem: github-actions
     directory: "/"
