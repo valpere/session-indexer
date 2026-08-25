@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # govulncheck is pinned via go.mod's `tool` directive (#61), which lands
+    # it in `require` as `// indirect`. Dependabot's default `allow` is
+    # direct-only and has no `tool` directive support yet (dependabot-core
+    # issue #12050 / PR #13655, both open as of 2026-08-25) — without this
+    # rule the pin never gets bumped. Drop this once #13655 merges.
+    allow:
+      - dependency-type: direct
+      - dependency-name: "golang.org/x/vuln"
 
   - package-ecosystem: github-actions
     directory: "/"
