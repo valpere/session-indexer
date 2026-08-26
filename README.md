@@ -96,6 +96,12 @@ session-indexer facts search   <query>            --db .claude/sessions.db [--li
 session-indexer facts get      <id>               --db .claude/sessions.db [--json]
 session-indexer facts related  <id>               --db .claude/sessions.db [--json]
 session-indexer facts supersede <new-id> <old-id> --db .claude/sessions.db
+
+# Browse without a query
+session-indexer sessions             --db .claude/sessions.db [--by-session] [--json]
+session-indexer list                 --db .claude/sessions.db [--limit N] [--since D] [--until D] [--role R] [--session ID] [--json]
+session-indexer show <chunk-id>      --db .claude/sessions.db [--json]
+session-indexer facts list           --db .claude/sessions.db [--limit N] [--since D] [--until D] [--min-confidence F] [--include-expired] [--json]
 ```
 
 ### `mine` output
@@ -151,6 +157,44 @@ session-indexer facts related 7 --db .claude/sessions.db
 # Manual override (audit/backstop — distill already judges supersession automatically)
 session-indexer facts supersede 9 7 --db .claude/sessions.db
 ```
+
+## Browsing without a query
+
+`search` and `facts search` both need a query term; `stats` gives aggregates
+only. `sessions`, `list`, `show`, and `facts list` fill the gap — enumerate
+what's actually in the store, and close the provenance loop from a fact back
+to the text it was distilled from:
+
+```bash
+# What's in the store, by day (the default — see why below)
+session-indexer sessions --db .claude/sessions.db
+# → 2026-08-25    43 chunks  (43 embedded, 12 distilled, 2 sessions)
+#   2026-08-24   156 chunks  (156 embedded, 89 distilled, 1 sessions)
+
+# Raw session_id rollup instead — usually far more skewed, see below
+session-indexer sessions --db .claude/sessions.db --by-session
+
+# Recent chunks, newest first, with filters
+session-indexer list --db .claude/sessions.db --limit 5 --since 2026-08-20 --role assistant
+
+# Close the provenance loop: a fact's source_chunk_id, then the chunk itself
+session-indexer facts get 7 --db .claude/sessions.db
+# → source_chunk_id: 135
+session-indexer show 135 --db .claude/sessions.db
+# → full chunk text, plus every fact distilled from it (including 7)
+
+# Facts without a query term
+session-indexer facts list --db .claude/sessions.db --limit 10 --min-confidence 0.9
+```
+
+`sessions` defaults to grouping by `session_date`, not `session_id`. In
+practice `session_id` is a poor browse axis: `--resume` keeps the same
+`sessionId` alive for months, so a handful of ids end up owning most chunks
+while the rest own a handful each — `--by-session` shows this raw view when
+you want it, but `session_date` gives evenly-sized, recall-shaped buckets by
+default. No index exists on `session_date`; a full scan is single-digit
+milliseconds even on a store with tens of thousands of chunks, so adding one
+isn't worth another schema bump.
 
 ## Embeddings
 

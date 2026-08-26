@@ -34,3 +34,36 @@ type Fact struct {
 	Until         *string // tombstone timestamp; nil = currently valid
 	SupersededBy  *int64  // id of the fact that superseded this one
 }
+
+// ChunkSummary is one stored chunk as returned by the browse verbs
+// (list/show) — distinct from SearchResult, whose Score is meaningless
+// when nothing was ranked, and which lacks ID/SessionID needed to browse.
+type ChunkSummary struct {
+	ID           int64
+	SessionID    string
+	SessionDate  string
+	Role         string
+	Content      string
+	HasEmbedding bool
+	Distilled    bool
+}
+
+// DaySummary rolls up chunks by session_date, the default browse axis
+// (session_id is a poor axis in practice — see internal/browse doc).
+type DaySummary struct {
+	SessionDate string
+	Chunks      int
+	Embedded    int
+	Distilled   int
+	Sessions    int // distinct session_ids touching this date
+}
+
+// SessionSummary rolls up chunks by session_id (the --by-session view).
+type SessionSummary struct {
+	SessionID string
+	Chunks    int
+	Embedded  int
+	Distilled int
+	FirstDate string
+	LastDate  string
+}

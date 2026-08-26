@@ -293,6 +293,54 @@ The config validation approach using JSON Schema has a key advantage...
 
 ---
 
+## Browsing
+
+`internal/browse` provides read-only enumeration with no query term required
+— `sessions`, `list`, `show` — kept out of `internal/search` on purpose,
+since that package's doc scopes it to *ranked* retrieval and its
+`SearchResult` type carries a `Score` that is meaningless when nothing was
+ranked. `internal.ChunkSummary` is the browse-layer row type instead:
+
+```
+ListChunks(d, ListOpts{Limit, Since, Until, Role, Session}) → []ChunkSummary
+GetChunk(d, id)                                            → ChunkSummary
+Days(d)                                                     → []DaySummary    (session_date rollup)
+Sessions(d)                                                 → []SessionSummary (session_id rollup)
+```
+
+`ListChunks` orders `session_date DESC, id DESC` — not `id DESC` alone,
+because re-mining an older JSONL later inserts high-id rows with an old
+`session_date`, and a browse view should sort by when the content happened,
+not when it was indexed.
+
+`sessions` defaults to the `Days` rollup (grouped by `session_date`), not
+`Sessions` (`session_id`). In practice `--resume` keeps one `sessionId` alive
+for months, so grouping by `session_id` produces a few huge buckets and many
+single-chunk ones — `session_date` gives evenly-sized buckets that match how
+people actually recall work ("what was I doing last week"). `--by-session`
+exposes the raw `session_id` rollup for when that skew is itself of
+interest.
+
+No index on `session_date`: `ORDER BY session_date DESC LIMIT N` full-scans
+in single-digit milliseconds even on a live 26k-chunk/150MB store (measured,
+not estimated). Adding one would force another schema bump — and the
+delete-and-re-mine that comes with it — for no measurable gain; revisit only
+if a future bump happens anyway.
+
+`show <chunk-id>` composes `browse.GetChunk` with `facts.BySourceChunk` to
+close the provenance loop: every fact has `source_chunk_id` populated, but
+before this layer existed there was no way to look at the chunk a fact was
+distilled from — `facts get <id>` reported the id and nowhere to go next.
+`facts.BySourceChunk` (unlike `facts.List`/`Search`) includes tombstoned
+facts, since a superseded fact is still legitimate provenance for what a
+chunk's text says.
+
+`facts list` (`facts.List`) is the query-free counterpart to `facts search`
+— same `until IS NULL` default-exclusion convention, plus `--since`/`--until`
+(on `session_date`) and `--min-confidence`.
+
+---
+
 ## Facts Layer
 
 A distilled, structured layer of subject-predicate-object claims sitting
@@ -410,6 +458,8 @@ pull the distill model (OLLAMA_DISTILL_MODEL)`, matching NFR-1.
 
 **2026-08-24** — Added a `model` column to `embeddings`, `SchemaVersion` "2" → "3". Existing DBs must be deleted and re-mined (same policy as above). Prerequisite for supporting a second embedding provider (OpenRouter, alongside Ollama): search now filters to the currently configured model's rows and warns on a mismatch instead of silently mis-scoring vectors of a different dimensionality; `session-indexer embed` re-embeds foreign-model rows in place, so a *future* provider/model switch no longer needs a wipe (only this one-time schema bump does).
 
+**2026-08-26** — Added `internal/browse` and the `sessions`/`list`/`show`/`facts list` verbs (see "Browsing" above). **No `SchemaVersion` change, no re-mine required** — pure read-only additions over the existing schema.
+
 ---
 
 ## File Layout
@@ -433,8 +483,10 @@ session-indexer/
 │   │   └── search.go        — exhaustive cosine; FTS5 fallback; Stats
 │   ├── distill/
 │   │   └── distill.go       — Ollama generate client + orchestration (confidence gate, supersession)
-│   └── facts/
-│       └── facts.go         — read verbs: search (FTS5), get, related
+│   ├── facts/
+│   │   └── facts.go         — read verbs: search (FTS5), list, get, related, bySourceChunk
+│   └── browse/
+│       └── browse.go        — read verbs w/ no query: listChunks, getChunk, days, sessions
 ├── docs/
 │   ├── requirements.md
 │   ├── use-cases.md

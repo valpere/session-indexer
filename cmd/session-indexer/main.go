@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/valpere/session-indexer/internal"
+	"github.com/valpere/session-indexer/internal/browse"
 	"github.com/valpere/session-indexer/internal/db"
 	"github.com/valpere/session-indexer/internal/distill"
 	"github.com/valpere/session-indexer/internal/embed"
@@ -162,6 +163,102 @@ func main() {
 		},
 	}
 
+	var listLimit int
+	var listSince, listUntil, listRole, listSession string
+	var listJSON bool
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List chunks without a query, newest first",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			res, err := browse.ListChunks(d, browse.ListOpts{
+				Limit: listLimit, Since: listSince, Until: listUntil,
+				Role: listRole, Session: listSession,
+			})
+			if err != nil {
+				return err
+			}
+			return printChunks(res, listJSON)
+		},
+	}
+	listCmd.Flags().IntVar(&listLimit, "limit", 20, "max chunks")
+	listCmd.Flags().StringVar(&listSince, "since", "", "only chunks on/after this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listUntil, "until", "", "only chunks on/before this date (YYYY-MM-DD)")
+	listCmd.Flags().StringVar(&listRole, "role", "", "filter by role: user or assistant")
+	listCmd.Flags().StringVar(&listSession, "session", "", "filter by exact session_id")
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "machine-readable output")
+
+	var showJSON bool
+	showCmd := &cobra.Command{
+		Use:   "show <chunk-id>",
+		Short: "Show one chunk's full content and the facts distilled from it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid chunk id %q: %w", args[0], err)
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			chunk, err := browse.GetChunk(d, id)
+			if err != nil {
+				return err
+			}
+			chunkFacts, err := facts.BySourceChunk(d, id)
+			if err != nil {
+				return err
+			}
+			return printChunkDetail(chunk, chunkFacts, showJSON)
+		},
+	}
+	showCmd.Flags().BoolVar(&showJSON, "json", false, "machine-readable output")
+
+	var bySession bool
+	var sessionsJSON bool
+	sessionsCmd := &cobra.Command{
+		Use:   "sessions",
+		Short: "Roll up indexed chunks by day (or by session_id with --by-session)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			if bySession {
+				res, err := browse.Sessions(d)
+				if err != nil {
+					return err
+				}
+				return printSessions(res, sessionsJSON)
+			}
+			res, err := browse.Days(d)
+			if err != nil {
+				return err
+			}
+			return printDays(res, sessionsJSON)
+		},
+	}
+	sessionsCmd.Flags().BoolVar(&bySession, "by-session", false, "group by raw session_id instead of day (skewed — see README)")
+	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "machine-readable output")
+
 	var threshold float64
 	var distillModel string
 	var distillConcurrency int
@@ -306,10 +403,45 @@ func main() {
 		},
 	}
 
-	factsCmd := &cobra.Command{Use: "facts", Short: "Query the distilled facts layer"}
-	factsCmd.AddCommand(factsSearchCmd, factsGetCmd, factsRelatedCmd, factsSupersedeCmd)
+	var factsListLimit int
+	var factsListSince, factsListUntil string
+	var factsListMinConfidence float64
+	var factsListIncludeExpired bool
+	var factsListJSON bool
+	factsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List facts without a query, newest first",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if dbPath == "" {
+				return fmt.Errorf("--db is required")
+			}
+			d, err := db.Open(dbPath)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
+			res, err := facts.List(d, facts.ListOpts{
+				Limit: factsListLimit, Since: factsListSince, Until: factsListUntil,
+				MinConfidence: factsListMinConfidence, IncludeExpired: factsListIncludeExpired,
+			})
+			if err != nil {
+				return err
+			}
+			return printFacts(res, factsListJSON)
+		},
+	}
+	factsListCmd.Flags().IntVar(&factsListLimit, "limit", 20, "max facts")
+	factsListCmd.Flags().StringVar(&factsListSince, "since", "", "only facts on/after this date (YYYY-MM-DD)")
+	factsListCmd.Flags().StringVar(&factsListUntil, "until", "", "only facts on/before this date (YYYY-MM-DD)")
+	factsListCmd.Flags().Float64Var(&factsListMinConfidence, "min-confidence", 0, "only facts at/above this confidence")
+	factsListCmd.Flags().BoolVar(&factsListIncludeExpired, "include-expired", false, "include tombstoned facts")
+	factsListCmd.Flags().BoolVar(&factsListJSON, "json", false, "machine-readable output")
 
-	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, distillCmd, factsCmd)
+	factsCmd := &cobra.Command{Use: "facts", Short: "Query the distilled facts layer"}
+	factsCmd.AddCommand(factsSearchCmd, factsListCmd, factsGetCmd, factsRelatedCmd, factsSupersedeCmd)
+
+	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, listCmd, showCmd, sessionsCmd, distillCmd, factsCmd)
 	if err := root.Execute(); err != nil {
 		switch {
 		case errors.Is(err, distill.ErrCircuitBreaker):
@@ -454,6 +586,76 @@ func snippet(s string) string {
 		cut = cut[:i]
 	}
 	return cut + "…"
+}
+
+func printChunks(res []internal.ChunkSummary, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	for _, c := range res {
+		fmt.Printf("[%d | %s | %s]\n%s\n%s\n", c.ID, c.SessionDate, c.Role, snippet(c.Content),
+			"──────────────────────────────────────────────────────")
+	}
+	if len(res) == 0 {
+		fmt.Println("(no results)")
+	}
+	return nil
+}
+
+func printChunkDetail(chunk internal.ChunkSummary, chunkFacts []internal.Fact, asJSON bool) error {
+	if asJSON {
+		out := struct {
+			Chunk internal.ChunkSummary `json:"chunk"`
+			Facts []internal.Fact       `json:"facts"`
+		}{chunk, chunkFacts}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+	fmt.Printf("[chunk %d | %s | %s | session %s]\n%s\n", chunk.ID, chunk.SessionDate, chunk.Role,
+		chunk.SessionID, chunk.Content)
+	if len(chunkFacts) > 0 {
+		fmt.Printf("\nFacts distilled from this chunk: %d\n", len(chunkFacts))
+		for _, f := range chunkFacts {
+			fmt.Printf("  [%d] %s | %s | %s (confidence %.2f)%s\n",
+				f.ID, f.Subject, f.Predicate, f.Object, f.Confidence, factStatusSuffix(f))
+		}
+	}
+	return nil
+}
+
+func printDays(res []internal.DaySummary, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	for _, s := range res {
+		fmt.Printf("%s  %5d chunks  (%d embedded, %d distilled, %d sessions)\n",
+			s.SessionDate, s.Chunks, s.Embedded, s.Distilled, s.Sessions)
+	}
+	if len(res) == 0 {
+		fmt.Println("(no results)")
+	}
+	return nil
+}
+
+func printSessions(res []internal.SessionSummary, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	for _, s := range res {
+		fmt.Printf("%s  %5d chunks  %s → %s  (%d embedded, %d distilled)\n",
+			s.SessionID, s.Chunks, s.FirstDate, s.LastDate, s.Embedded, s.Distilled)
+	}
+	if len(res) == 0 {
+		fmt.Println("(no results)")
+	}
+	return nil
 }
 
 func printFacts(res []internal.Fact, asJSON bool) error {
