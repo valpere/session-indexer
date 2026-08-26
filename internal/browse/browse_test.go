@@ -99,6 +99,14 @@ func TestListChunksFilters(t *testing.T) {
 	}
 }
 
+func TestListChunksNegativeLimit(t *testing.T) {
+	d := openTestDB(t)
+	insertChunk(t, d, "s1", "2026-08-01", "user", 0)
+	if _, err := ListChunks(d, ListOpts{Limit: -1}); err == nil {
+		t.Fatal("ListChunks: expected error for negative limit (SQLite treats it as unbounded)")
+	}
+}
+
 func TestListChunksInvalidDate(t *testing.T) {
 	d := openTestDB(t)
 	if _, err := ListChunks(d, ListOpts{Limit: 10, Since: "not-a-date"}); err == nil {

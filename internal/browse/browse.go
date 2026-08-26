@@ -46,6 +46,16 @@ func validateDate(field, s string) error {
 	return nil
 }
 
+// validateLimit rejects a negative Limit — SQLite treats a negative LIMIT
+// as "no limit at all" rather than an error, which would silently return
+// every row instead of the requested (small) page.
+func validateLimit(n int) error {
+	if n < 0 {
+		return fmt.Errorf("invalid limit %d: must be >= 0", n)
+	}
+	return nil
+}
+
 // ListChunks returns chunks newest-first (by session_date, then id — id
 // alone is insufficient: re-mining an older JSONL later inserts rows whose
 // id is high but whose session_date is old, and date order is what a
@@ -55,6 +65,9 @@ func ListChunks(d *sql.DB, o ListOpts) ([]internal.ChunkSummary, error) {
 		return nil, err
 	}
 	if err := validateDate("until", o.Until); err != nil {
+		return nil, err
+	}
+	if err := validateLimit(o.Limit); err != nil {
 		return nil, err
 	}
 	q := `SELECT c.id, c.session_id, c.session_date, c.role, c.content,

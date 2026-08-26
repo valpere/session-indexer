@@ -224,6 +224,14 @@ func TestListFilters(t *testing.T) {
 	}
 }
 
+func TestListNegativeLimit(t *testing.T) {
+	d := openTestDB(t)
+	insertFactFull(t, d, "a", "is", "x", "2026-07-01", 0.9, 0)
+	if _, err := List(d, ListOpts{Limit: -1}); err == nil {
+		t.Fatal("List: expected error for negative limit (SQLite treats it as unbounded)")
+	}
+}
+
 func TestBySourceChunk(t *testing.T) {
 	d := openTestDB(t)
 	chunkID, inserted, err := db.InsertChunk(d, internal.Chunk{

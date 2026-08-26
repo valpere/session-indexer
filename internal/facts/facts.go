@@ -101,6 +101,12 @@ type ListOpts struct {
 // browse counterpart to Search. Mirrors Search's until IS NULL convention
 // for excluding tombstoned facts by default.
 func List(d *sql.DB, o ListOpts) ([]internal.Fact, error) {
+	// SQLite treats a negative LIMIT as "no limit at all" rather than an
+	// error, which would silently return every row instead of the
+	// requested (small) page — reject it up front instead.
+	if o.Limit < 0 {
+		return nil, fmt.Errorf("invalid limit %d: must be >= 0", o.Limit)
+	}
 	q := `SELECT id, subject, predicate, object, confidence,
 	             source_chunk_id, session_date, created_at, until, superseded_by
 	      FROM facts WHERE 1=1`
