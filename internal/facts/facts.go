@@ -88,6 +88,71 @@ func Related(d *sql.DB, id int64) ([]internal.Fact, error) {
 	return append(incoming, outgoing...), nil
 }
 
+// ListOpts filters List. Zero-value fields mean "no filter"; Limit is
+// applied as-is (callers, e.g. a Cobra flag, own the default).
+type ListOpts struct {
+	Limit          int
+	Since, Until   string // YYYY-MM-DD inclusive; "" = unbounded
+	MinConfidence  float64
+	IncludeExpired bool
+}
+
+// List returns facts newest-first with no query term required — the
+// browse counterpart to Search. Mirrors Search's until IS NULL convention
+// for excluding tombstoned facts by default.
+func List(d *sql.DB, o ListOpts) ([]internal.Fact, error) {
+	// SQLite treats a negative LIMIT as "no limit at all" rather than an
+	// error, which would silently return every row instead of the
+	// requested (small) page — reject it up front instead.
+	if o.Limit < 0 {
+		return nil, fmt.Errorf("invalid limit %d: must be >= 0", o.Limit)
+	}
+	q := `SELECT id, subject, predicate, object, confidence,
+	             source_chunk_id, session_date, created_at, until, superseded_by
+	      FROM facts WHERE 1=1`
+	var args []any
+	if !o.IncludeExpired {
+		q += ` AND until IS NULL`
+	}
+	if o.Since != "" {
+		q += ` AND session_date >= ?`
+		args = append(args, o.Since)
+	}
+	if o.Until != "" {
+		q += ` AND session_date <= ?`
+		args = append(args, o.Until)
+	}
+	if o.MinConfidence > 0 {
+		q += ` AND confidence >= ?`
+		args = append(args, o.MinConfidence)
+	}
+	q += ` ORDER BY session_date DESC, id DESC LIMIT ?`
+	args = append(args, o.Limit)
+
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("facts list: %w", err)
+	}
+	defer rows.Close()
+	return scanFacts(rows)
+}
+
+// BySourceChunk returns every fact distilled from the given chunk —
+// including tombstoned ones, since a superseded fact is still relevant
+// provenance for that chunk's text (unlike List/Search, which default to
+// current facts for a query result).
+func BySourceChunk(d *sql.DB, chunkID int64) ([]internal.Fact, error) {
+	rows, err := d.Query(
+		`SELECT id, subject, predicate, object, confidence,
+		        source_chunk_id, session_date, created_at, until, superseded_by
+		 FROM facts WHERE source_chunk_id = ? ORDER BY id`, chunkID)
+	if err != nil {
+		return nil, fmt.Errorf("facts by source chunk: %w", err)
+	}
+	defer rows.Close()
+	return scanFacts(rows)
+}
+
 // ftsMatchExpr builds an OR of quoted terms from the query for keyword
 // recall — the same per-term-OR approach as internal/search.ftsMatchExpr
 // (unexported there; reimplemented here rather than shared, matching this

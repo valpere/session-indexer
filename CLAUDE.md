@@ -31,7 +31,10 @@ session-indexer search  <query>      --db <path> [--limit N] [--json]
 session-indexer embed                --db <path>        # backfill missing embeddings
 session-indexer stats                --db <path>        # sessions, chunks, facts, pending, DB size
 session-indexer distill              --db <path> [--threshold 0.7]   # LLM-extract facts, manual, no deadline
-session-indexer facts search/get/related/supersede --db <path>       # query the facts layer
+session-indexer facts search/list/get/related/supersede --db <path>  # query the facts layer
+session-indexer sessions             --db <path> [--by-session]      # roll up by day (default) or session_id
+session-indexer list                 --db <path> [--limit N] [--since D] [--until D] [--role R] [--session ID]
+session-indexer show    <chunk-id>   --db <path>        # full chunk text + facts distilled from it
 ```
 
 ### File Layout
@@ -53,7 +56,9 @@ internal/search/
 internal/distill/
   distill.go                      — Ollama generate client + orchestration: confidence gate (deterministic Go check, not LLM-enforced), automatic supersession with a validated-against-context safeguard
 internal/facts/
-  facts.go                        — read verbs: Search (FTS5 BM25), Get (supersedes edges), Related (depth-1)
+  facts.go                        — read verbs: Search (FTS5 BM25), List (no query, browse), Get (supersedes edges), Related (depth-1), BySourceChunk (provenance for `show`)
+internal/browse/
+  browse.go                       — read-only enumeration without a query: ListChunks, GetChunk, Days, Sessions — backs `list`/`show`/`sessions`
 ```
 
 ### Storage
@@ -79,6 +84,30 @@ Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims)
 ### Search
 
 Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Scale assumption: <10k chunks. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
+
+### Browsing
+
+`internal/browse` provides read-only enumeration without a query — `sessions`,
+`list`, `show` — deliberately separate from `internal/search`, whose package
+doc scopes it to *ranked* retrieval. `show <chunk-id>` composes
+`browse.GetChunk` with `facts.BySourceChunk` to close the provenance loop from
+a fact (`facts get <id>` reports `source_chunk_id`) back to the actual chunk
+text it was distilled from — the highest-value part of this layer, since
+`stats` only gives aggregates and `search`/`facts search` both require a
+query term.
+
+`sessions` defaults to grouping by `session_date`, not `session_id`:
+`--resume` keeps a single `sessionId` alive for months, so `session_id` in
+practice produces a few huge buckets and many single-chunk ones, while
+`session_date` gives evenly-sized buckets that match how people recall work.
+`--by-session` gives the raw `session_id` rollup when that skew itself is
+what you want to see.
+
+No index exists on `session_date` — measured on a live 26k-chunk/150MB store,
+`ORDER BY session_date DESC LIMIT N` full-scans in single-digit milliseconds,
+and adding an index would force another schema bump (and the re-mine that
+comes with it) for no measurable gain. Revisit only if a future schema bump
+happens anyway.
 
 ### Facts Layer
 
