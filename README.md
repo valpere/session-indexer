@@ -356,7 +356,13 @@ separate top-level `Stop` entries). See Hook Setup above.
 ```
 schema version mismatch (X != Y): delete .claude/sessions.db and re-mine to rebuild
 ```
-Delete the DB and re-run `mine` on your JSONLs — `mine` is idempotent.
+Default path: delete the DB and re-run `mine` on your JSONLs — `mine` is
+idempotent. **But check first** if this is an established project: Claude
+Code prunes old JSONL transcripts after a while, so a long-running DB can
+hold more history than re-mining could actually reconstruct. If your
+current version bumped from schema 2 to 3, an in-place migration that
+loses nothing is available — see
+[`docs/migrations/schema-v2-to-v3.md`](docs/migrations/schema-v2-to-v3.md).
 
 **Search returns poor results / FTS5 fallback:**
 ```bash
@@ -378,3 +384,14 @@ tail -40 ~/.cache/$(basename "$(git rev-parse --show-toplevel)")/hooks.log
 **DB size:** scale assumption is <10k chunks (~40MB vectors in memory). No hard
 limit, but `search` loads all embedding rows into memory for cosine; if the DB
 grows beyond ~50k chunks, revisit.
+
+## Versioning & Releases
+
+[SemVer](https://semver.org/), with one project rule: any release that
+bumps `internal/db.SchemaVersion` gets at least a MINOR bump, never a
+PATCH — treat a MINOR release as potentially requiring a DB migration
+until `v1.0.0` (not yet reached). See [`docs/versioning.md`](docs/versioning.md)
+for the full policy (branching, release cutting) and
+[`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
+Pre-built binaries for Linux/macOS/Windows are attached to each
+[GitHub Release](https://github.com/valpere/session-indexer/releases).
