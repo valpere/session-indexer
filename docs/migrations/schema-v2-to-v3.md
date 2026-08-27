@@ -54,7 +54,8 @@ EOF
 # 3. Bring your session-indexer binary current (if you haven't already).
 go install ./cmd/session-indexer   # or: make install
 
-# 4. Verify nothing was lost — compare against what you recorded in step 0.
+# 4. Verify nothing was lost — compare against the counts you recorded
+#    in "Read this before you delete anything" above.
 session-indexer stats --db .claude/sessions.db
 sqlite3 .claude/sessions.db "SELECT model, COUNT(*) FROM embeddings GROUP BY model;"
 ```

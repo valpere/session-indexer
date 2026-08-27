@@ -76,6 +76,8 @@ full per-PR history.
 
 ## [0.1.0] - 2026-06-29
 
+### Added
+
 Initial release. Core pipeline: `mine` (JSONL → SQLite, idempotent,
 chunked on paragraph boundaries with a noise filter), `embed` (Ollama
 `bge-m3:latest`, float32 BLOB storage, availability probe with graceful
