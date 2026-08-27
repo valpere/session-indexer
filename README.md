@@ -287,6 +287,41 @@ intentional design (per-project isolation is intentional — see
 [`docs/requirements.md`](docs/requirements.md) FR-3 — worktree splitting
 within one project isn't). If this affects your workflow, open an issue.
 
+**How do I see what's actually in the index, without already knowing what to search for?**
+
+`stats` gives aggregates and `search`/`facts search` both require a query
+term — neither helps when you just want to look around, especially on a
+project with a long history, before trusting what gets auto-injected at
+session start. Four verbs close that gap:
+
+```bash
+session-indexer sessions --db .claude/sessions.db
+# 2026-08-26    268 chunks  (268 embedded, 0 distilled, 1 sessions)
+# 2026-08-25    430 chunks  (430 embedded, 0 distilled, 2 sessions)
+# ...
+
+session-indexer list --db .claude/sessions.db --limit 5 --since 2026-08-20
+
+session-indexer show 135 --db .claude/sessions.db
+# [chunk 135 | 2026-06-25 | assistant]
+# <full text>
+# Facts distilled from this chunk: 2
+#   [1] Task 6: Mine orchestrator | is implemented in | ...
+```
+
+`show` is the one that actually matters: every distilled fact already
+carries a `source_chunk_id`, but before this existed there was no way to
+look at the chunk it pointed to — `facts get 7` reported an id with
+nowhere to go. `show` closes that loop, which is the real trust-building
+step, not just a listing.
+
+`sessions` defaults to grouping by day rather than by the raw session id
+— with `--resume` a single session id can stay alive for months, so
+day-grouping is the more honest view of what's actually in the store on a
+long-running project (`--by-session` gives the raw id-based rollup when
+you want that view instead). See ["Browsing"](docs/architecture.md#browsing)
+in the architecture doc for the full design rationale.
+
 ## Querying facts (discipline)
 
 The facts layer is a supersedable claim store, not a flat lookup table — a
