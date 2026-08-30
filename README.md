@@ -145,12 +145,6 @@ safeguards).
 session-indexer distill --db .claude/sessions.db --threshold 0.7
 # → Distilled 12 chunks: 5 facts stored, 3 below threshold, 1 superseded
 
-# Cost dials for Ollama Cloud (billed by GPU-time per call, not per token):
-# the facts-context block dominates each prompt, and one call per chunk
-# multiplies fast. Smaller context + batched chunks ≈ N× fewer, cheaper
-# calls; both default to the original behavior (200 / 1).
-session-indexer distill --db .claude/sessions.db --context-cap 30 --batch 4
-
 # Query
 session-indexer facts search "implementation status" --db .claude/sessions.db
 # → [7] session-indexer | has | 33 merged PRs (confidence 0.92)
@@ -163,6 +157,48 @@ session-indexer facts related 7 --db .claude/sessions.db
 # Manual override (audit/backstop — distill already judges supersession automatically)
 session-indexer facts supersede 9 7 --db .claude/sessions.db
 ```
+
+#### Cost dials — `--context-cap` and `--batch`
+
+Ollama Cloud bills by **GPU-time per call**, not per token, and the default
+distill prompt fights both halves of that:
+
+- every call re-sends a `CURRENT KNOWN FACTS` context block — at the default
+  cap of 200 facts it's ~14KB, roughly **30× the average ~470-char chunk**
+  it's there to judge supersession against;
+- each pending chunk is its own call, so a heavy coding day across several
+  projects multiplies into thousands of billable calls.
+
+Two flags address the two multipliers. Both default to the original
+behavior, so nothing changes unless you opt in:
+
+| Flag | Default | What it does | Effect |
+|------|---------|--------------|--------|
+| `--context-cap` | 200 | max current facts fed to the model for supersession judgment | smaller cap = smaller prompt = cheaper per call |
+| `--batch` | 1 | pending chunks per Ollama call (numbered-chunks prompt, per-fact `chunk_index` attribution) | batch N ≈ N× fewer calls |
+
+```bash
+# The nightly scheduled-maintenance invocation (what session-maintain.sh runs):
+session-indexer distill --db .claude/sessions.db \
+    --concurrency 4 --context-cap 30 --batch 4
+# → distill: 8/8 chunks (81 facts, 0 below threshold, 0 failed) [2m55s]
+#   Distilled 8 chunks: 81 facts stored, 0 below threshold, 0 superseded
+# (8 chunks consumed in 2 Ollama calls — two full batches of 4)
+
+# Smoke-test the dials on a few chunks before committing to them:
+session-indexer distill --db .claude/sessions.db --context-cap 30 --batch 4 --limit 8
+```
+
+A batch retries, fails, and gets marked distilled **as a unit** — the whole
+batch is left pending if its call errors or a fact insert fails, so nothing
+is silently dropped and the next run picks it up. A `--batch 1` call sends
+the byte-identical pre-batching prompt.
+
+**Dialing back:** if distilled-fact quality regresses (supersession misses on
+older facts, garbage/noisy facts), move `--batch` toward 1 and `--context-cap`
+toward 200; the defaults are exactly the pre-flag behavior. The 30/4
+combination above cut a measured peak of 80% of a weekly Ollama Pro quota
+(call volume, not per-call price) to a modeled ~10–15%.
 
 ## Browsing without a query
 
