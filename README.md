@@ -183,7 +183,7 @@ session-indexer distill --db .claude/sessions.db \
     --concurrency 4 --context-cap 30 --batch 4
 # → distill: 8/8 chunks (81 facts, 0 below threshold, 0 failed) [2m55s]
 #   Distilled 8 chunks: 81 facts stored, 0 below threshold, 0 superseded
-# (8 chunks consumed in 2 Ollama calls — a full batch of 4 plus a partial 1)
+# (8 chunks consumed in 2 Ollama calls — two full batches of 4)
 
 # Smoke-test the dials on a few chunks before committing to them:
 session-indexer distill --db .claude/sessions.db --context-cap 30 --batch 4 --limit 8
