@@ -839,6 +839,46 @@ func TestRunBatchesChunksPerCall(t *testing.T) {
 	}
 }
 
+// TestRunLeavesBatchOnInsertFactError is the batched counterpart of
+// TestRunLeavesChunkOnInsertFactError: a DB-level failure storing any
+// candidate fact in a batch must leave the WHOLE batch unmarked, so every
+// chunk in it is retried on the next run — the batch is the unit of
+// marking, and a transient DB error on one candidate must not silently
+// mark its (equally unstored) siblings as done.
+func TestRunLeavesBatchOnInsertFactError(t *testing.T) {
+	d := openTestDB(t)
+	for i := 0; i < 4; i++ {
+		seedChunk(t, d, "chunk whose fact fails to store", "2026-07-01")
+	}
+	// Drop facts_fts (the trigger target for INSERT INTO facts) so
+	// InsertFact fails deterministically inside Run — same fault-injection
+	// trick as TestRunLeavesChunkOnInsertFactError, which explains why it
+	// works without touching production code.
+	if _, err := d.Exec(`DROP TABLE facts_fts`); err != nil {
+		t.Fatalf("drop facts_fts table: %v", err)
+	}
+	cli := &fixedDistiller{avail: true, fn: func(chunks []string, _ []internal.Fact) ([]Candidate, error) {
+		if len(chunks) != 4 {
+			t.Errorf("Distill call got %d chunks, want the full batch of 4", len(chunks))
+		}
+		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, BatchSize: 4})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.FactsInserted != 0 {
+		t.Fatalf("res.FactsInserted = %d, want 0", res.FactsInserted)
+	}
+	if res.Failed < 1 {
+		t.Fatalf("res.Failed = %d, want >= 1 (the failed insert must be counted)", res.Failed)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 4 {
+		t.Fatalf("pending after InsertFact failure in batch = %+v err=%v, want all 4 (whole batch retried, not just the failing candidate)", pending, err)
+	}
+}
+
 // TestRunBatchFailsAsUnit verifies a batch whose Distill call fails after
 // its retry budget leaves ALL its chunks unmarked (retried on the next run)
 // and counts every chunk as failed — batching must not silently drop a
