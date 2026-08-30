@@ -217,6 +217,8 @@ outdated statement never disappears on its own.
 **Flow:**
 1. Periodically (or before shipping a batch of sessions), run:
    `session-indexer distill --db .claude/sessions.db --threshold 0.7`
+   (scheduled multi-project runs add the Ollama cost dials
+   `--context-cap 30 --batch 4` — see README's "Cost dials")
 2. The LLM call extracts subject-predicate-object facts from newly-mined
    chunks and judges supersession against currently-valid facts about the
    same subject — a corrected/updated statement auto-tombstones the fact
@@ -242,9 +244,11 @@ This is the concrete gap the facts layer exists to close — see
 contradictory facts about the same subject as both "current."
 
 **Trigger:** `distill`'s automatic supersession judgment is bounded by
-`ContextCap` (200) and by whatever the model actually noticed in a given
-chunk — it can miss a contradiction the LLM didn't recognize as the same
-subject, or one that arose in two mine runs distilled far apart in time.
+`--context-cap` (default 200) and by whatever the model actually noticed in
+a given chunk — it can miss a contradiction the LLM didn't recognize as the
+same subject, or one that arose in two mine runs distilled far apart in
+time. Runs that lower the cap for cost (e.g. `--context-cap 30`) narrow the
+window further, making this manual backstop proportionally more relevant.
 
 **Flow:**
 1. `session-indexer facts search "<subject>" --db .claude/sessions.db

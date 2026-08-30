@@ -30,7 +30,9 @@ session-indexer mine    <jsonl-path> --db <path>        # parse JSONL → SQLite
 session-indexer search  <query>      --db <path> [--limit N] [--json]
 session-indexer embed                --db <path>        # backfill missing embeddings
 session-indexer stats                --db <path>        # sessions, chunks, facts, pending, DB size
-session-indexer distill              --db <path> [--threshold 0.7]   # LLM-extract facts, manual, no deadline
+session-indexer distill              --db <path> [--threshold 0.7] [--context-cap 200] [--batch 1]
+                                                                    # LLM-extract facts, manual, no deadline;
+                                                                    # context-cap/batch are Ollama cost dials (see Facts Layer)
 session-indexer facts search/list/get/related/supersede --db <path>  # query the facts layer
 session-indexer sessions             --db <path> [--by-session]      # roll up by day (default) or session_id
 session-indexer list                 --db <path> [--limit N] [--since D] [--until D] [--role R] [--session ID]
