@@ -265,6 +265,8 @@ func main() {
 	var distillLimit int
 	var distillRetries int
 	var distillCircuitBreaker int
+	var distillContextCap int
+	var distillBatch int
 	distillCmd := &cobra.Command{
 		Use:   "distill",
 		Short: "Extract structured facts from mined chunks (LLM, Ollama)",
@@ -278,7 +280,7 @@ func main() {
 			if dbPath == "" {
 				return fmt.Errorf("--db is required")
 			}
-			return runDistill(dbPath, threshold, distillModel, distillConcurrency, distillLimit, distillRetries, distillCircuitBreaker)
+			return runDistill(dbPath, threshold, distillModel, distillConcurrency, distillLimit, distillRetries, distillCircuitBreaker, distillContextCap, distillBatch)
 		},
 	}
 	distillCmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum confidence to store a fact")
@@ -287,6 +289,8 @@ func main() {
 	distillCmd.Flags().IntVar(&distillLimit, "limit", 0, "max chunks to process this run (0 = all pending)")
 	distillCmd.Flags().IntVar(&distillRetries, "retries", 2, "extra attempts for a chunk that errors (e.g. 429), with exponential backoff, before leaving it for the next run")
 	distillCmd.Flags().IntVar(&distillCircuitBreaker, "circuit-breaker", 5, "stop the run after this many consecutive chunks fail all their retries (0 disables; signals a persistent outage, not a blip — e.g. Ollama quota exhausted)")
+	distillCmd.Flags().IntVar(&distillContextCap, "context-cap", 200, "max current facts fed to the distiller for supersession judgment (the context block dominates per-call cost; smaller = cheaper calls)")
+	distillCmd.Flags().IntVar(&distillBatch, "batch", 1, "pending chunks per Ollama call (Ollama cloud bills per call, so batching N chunks cuts call count ~N-fold; the batch retries and gets marked as a unit)")
 
 	var factsLimit int
 	var factsJSON bool
@@ -500,7 +504,7 @@ func runEmbed(dbPath string) error {
 	return nil
 }
 
-func runDistill(dbPath string, threshold float64, model string, concurrency, limit, retries, circuitBreaker int) error {
+func runDistill(dbPath string, threshold float64, model string, concurrency, limit, retries, circuitBreaker, contextCap, batch int) error {
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -521,8 +525,8 @@ func runDistill(dbPath string, threshold float64, model string, concurrency, lim
 	// distill is otherwise a manual, non-time-boxed command, explicitly
 	// exempt from mine's 50s/Stop-hook budget (NFR-4).
 	res, err := distill.Run(ctx, d, cli, distill.Config{
-		Threshold: threshold, ContextCap: 200, Concurrency: concurrency, Limit: limit,
-		MaxRetries: retries, CircuitBreaker: circuitBreaker,
+		Threshold: threshold, ContextCap: contextCap, Concurrency: concurrency, Limit: limit,
+		MaxRetries: retries, CircuitBreaker: circuitBreaker, BatchSize: batch,
 		OnProgress: func(done, total int, res distill.Result) {
 			fmt.Fprintf(os.Stderr, "\rdistill: %d/%d chunks (%d facts, %d below threshold, %d failed) [%s]",
 				done, total, res.FactsInserted, res.BelowThreshold, res.Failed, time.Since(start).Round(time.Second))

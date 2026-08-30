@@ -23,7 +23,7 @@ import (
 )
 
 // ErrCircuitBreaker is returned by Run (wrapped, with the streak length) when
-// cfg.CircuitBreaker consecutive chunks each exhaust their retry budget and
+// cfg.CircuitBreaker consecutive batches each exhaust their retry budget and
 // still fail — a persistent condition (Ollama cloud quota/rate exhausted for
 // the day, endpoint unreachable) rather than the transient blips MaxRetries
 // already absorbs. Callers should treat it as "stop and try again later",
@@ -31,19 +31,25 @@ import (
 // so the next Run naturally resumes from where this one gave up.
 var ErrCircuitBreaker = errors.New("distill: circuit breaker tripped")
 
-// Candidate is one fact proposed by the distiller for a single chunk.
+// Candidate is one fact proposed by the distiller for a single chunk. In a
+// multi-chunk call, ChunkIndex is the 1-based position within that call's
+// chunk list, as self-reported by the model ("chunk_index" in the response
+// JSON); 0 means the model didn't say.
 type Candidate struct {
 	Subject       string
 	Predicate     string
 	Object        string
 	Confidence    float64
 	SupersedesIDs []int64
+	ChunkIndex    int
 }
 
-// Distiller extracts fact candidates from a chunk and reports availability.
+// Distiller extracts fact candidates from one or more chunks and reports
+// availability. A call carries a batch of chunk contents (len >= 1); a single
+// chunk per call is the original behavior and uses the single-chunk prompt.
 type Distiller interface {
 	Available() bool
-	Distill(ctx context.Context, chunk string, existing []internal.Fact) ([]Candidate, error)
+	Distill(ctx context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error)
 }
 
 // Client is an Ollama-backed Distiller.
@@ -122,16 +128,17 @@ type distillResponse struct {
 		Predicate     string  `json:"predicate"`
 		Object        string  `json:"object"`
 		Confidence    float64 `json:"confidence"`
+		ChunkIndex    int     `json:"chunk_index"`
 		SupersedesIDs []int64 `json:"supersedes_ids"`
 	} `json:"facts"`
 }
 
-// Distill returns fact candidates extracted from chunk via POST /api/generate.
+// Distill returns fact candidates extracted from chunks via POST /api/generate.
 // The request is cancelled when ctx is done. Single attempt, no retry — a
 // failed chunk is left un-distilled for the next run, matching embed's
 // documented no-retry convention.
-func (c *Client) Distill(ctx context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
-	prompt := buildPrompt(chunk, existing)
+func (c *Client) Distill(ctx context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error) {
+	prompt := buildPrompt(chunks, existing)
 	body, _ := json.Marshal(map[string]any{
 		"model":  c.model,
 		"prompt": prompt,
@@ -175,6 +182,7 @@ func (c *Client) Distill(ctx context.Context, chunk string, existing []internal.
 			Object:        f.Object,
 			Confidence:    f.Confidence,
 			SupersedesIDs: f.SupersedesIDs,
+			ChunkIndex:    f.ChunkIndex,
 		})
 	}
 	return candidates, nil
@@ -197,14 +205,10 @@ func stripMarkdownFence(s string) string {
 	return strings.TrimSpace(s)
 }
 
-const promptTemplate = `You extract atomic, durable facts from a single Claude Code conversation
-chunk. The chunk may be in English or Ukrainian or both — extract facts in
-the language they are stated; do not translate.
-
-Return ONLY JSON: {"facts":[{"subject":"...","predicate":"...","object":"...",
-"confidence":0.0,"supersedes_ids":[]}]}
-
-Each fact is a subject-predicate-object triple about the USER, the PROJECT,
+// factExtractionRules is the instruction block shared by both prompt
+// variants: what a fact is, the confidence scale, and the supersession
+// contract. One const so the two variants cannot drift apart.
+const factExtractionRules = `Each fact is a subject-predicate-object triple about the USER, the PROJECT,
 its CODE, DECISIONS, or CONVENTIONS. Extract only durable, reusable facts —
 not transient chit-chat, not restatements of the assistant's own reasoning.
 
@@ -216,7 +220,18 @@ You are given the project's CURRENT KNOWN FACTS (id + statement). If a fact
 you extract makes one of them false or out of date (status change, reversed
 decision, corrected value about the SAME subject), put that id in
 "supersedes_ids". Only use ids from this list. If nothing is superseded, use
-an empty array. Do not supersede a fact that is merely related but still true.
+an empty array. Do not supersede a fact that is merely related but still true.`
+
+// promptTemplate is the original single-chunk prompt. A len(chunks)==1 call
+// renders exactly what every call rendered before batching existed.
+const promptTemplate = `You extract atomic, durable facts from a single Claude Code conversation
+chunk. The chunk may be in English or Ukrainian or both — extract facts in
+the language they are stated; do not translate.
+
+Return ONLY JSON: {"facts":[{"subject":"...","predicate":"...","object":"...",
+"confidence":0.0,"supersedes_ids":[]}]}
+
+` + factExtractionRules + `
 
 CURRENT KNOWN FACTS:
 %s
@@ -224,10 +239,33 @@ CURRENT KNOWN FACTS:
 CHUNK:
 %s`
 
-// buildPrompt renders promptTemplate. Kept as plain string formatting, not
-// text/template — this codebase has no templating framework and one call
-// site doesn't justify adding one.
-func buildPrompt(chunk string, existing []internal.Fact) string {
+// batchPromptTemplate extends promptTemplate to multiple numbered chunks:
+// the response schema gains per-fact chunk_index, and the CHUNK section
+// becomes a numbered CHUNKS list each fact must cite.
+const batchPromptTemplate = `You extract atomic, durable facts from numbered Claude Code conversation
+chunks. The chunks may be in English or Ukrainian or both — extract facts in
+the language they are stated; do not translate.
+
+Return ONLY JSON: {"facts":[{"subject":"...","predicate":"...","object":"...",
+"confidence":0.0,"chunk_index":1,"supersedes_ids":[]}]}
+
+Each fact must carry "chunk_index": the number of the chunk it was extracted
+from.
+
+` + factExtractionRules + `
+
+CURRENT KNOWN FACTS:
+%s
+
+CHUNKS:
+%s`
+
+// buildPrompt renders the prompt for a call over chunks. One chunk renders
+// the original single-chunk template; two or more render the numbered batch
+// template. Kept as plain string formatting, not text/template — this
+// codebase has no templating framework and two call-site branches don't
+// justify adding one.
+func buildPrompt(chunks []string, existing []internal.Fact) string {
 	var factsBlock strings.Builder
 	if len(existing) == 0 {
 		factsBlock.WriteString("(none yet)")
@@ -236,15 +274,33 @@ func buildPrompt(chunk string, existing []internal.Fact) string {
 			fmt.Fprintf(&factsBlock, " - [%d] %s | %s | %s\n", f.ID, f.Subject, f.Predicate, f.Object)
 		}
 	}
-	return fmt.Sprintf(promptTemplate, strings.TrimRight(factsBlock.String(), "\n"), chunk)
+	facts := strings.TrimRight(factsBlock.String(), "\n")
+	if len(chunks) == 1 {
+		return fmt.Sprintf(promptTemplate, facts, chunks[0])
+	}
+	var chunkBlock strings.Builder
+	for i, c := range chunks {
+		fmt.Fprintf(&chunkBlock, "[%d] %s\n\n", i+1, c)
+	}
+	return fmt.Sprintf(batchPromptTemplate, facts, strings.TrimRight(chunkBlock.String(), "\n"))
 }
 
 // Config controls a distill Run.
 type Config struct {
 	Threshold   float64 // minimum confidence to store a fact (default 0.7)
 	ContextCap  int     // max current facts to feed the distiller for supersession judgment (default 200)
-	Concurrency int     // chunks distilled in parallel; <=1 runs strictly sequential (default)
+	Concurrency int     // batches distilled in parallel; <=1 runs strictly sequential (default)
 	Limit       int     // max chunks to process this run; <=0 means no limit (process all pending)
+
+	// BatchSize is how many pending chunks share one Distill call. <=1
+	// (default) preserves the original one-chunk-per-call behavior. Batching
+	// exists because Ollama cloud bills per call, not per token: the
+	// per-call prompt is dominated by the fact-context block, so N chunks in
+	// one call cost far less than N separate calls. The retry and
+	// not-marked-until-stored semantics operate on the whole batch — a
+	// failing batch retries (and, still failing, is left for the next run)
+	// as a unit.
+	BatchSize int
 
 	// MaxRetries is the number of extra Distill attempts for a chunk whose
 	// first call errors (e.g. HTTP 429 from Ollama cloud under concurrent
@@ -301,10 +357,10 @@ type Result struct {
 	Failed          int
 }
 
-// fetchOutcome is one chunk's Distill call result, produced by a worker and
+// fetchOutcome is one batch's Distill call result, produced by a worker and
 // consumed by Run's single DB-writing loop.
 type fetchOutcome struct {
-	chunk           db.PendingFactChunk
+	batch           []db.PendingFactChunk
 	candidates      []Candidate
 	err             error
 	promptContext   []internal.Fact
@@ -315,38 +371,40 @@ type fetchOutcome struct {
 // gate deterministically in Go (the model's self-reported confidence is
 // advisory input to this hard check, not the enforcement mechanism).
 //
-// Uses context.Background() internally per pending chunk's Distill call —
+// Uses context.Background() internally per batch's Distill call —
 // distill is a manual, non-time-boxed command, explicitly exempt from
 // mine's 50s/Stop-hook budget. The passed ctx still governs overall
-// cancellation (e.g. Ctrl-C) between chunks.
+// cancellation (e.g. Ctrl-C) between batches.
 //
 // cfg.Concurrency workers fetch existing-facts context and call cli.Distill
-// (the network-bound step) in parallel; every DB write (InsertFact,
-// SupersedeFact, MarkChunkDistilled) happens sequentially in this function's
-// own goroutine as outcomes arrive, so SQLite never sees concurrent writers.
-// A side effect: "current facts" context fed to concurrently-in-flight
-// chunks may be a few facts stale relative to strictly sequential Run — the
-// same tradeoff any batched/parallel supersession pipeline makes.
+// (the network-bound step) in parallel, one call per batch of cfg.BatchSize
+// chunks; every DB write (InsertFact, SupersedeFact, MarkChunkDistilled)
+// happens sequentially in this function's own goroutine as outcomes arrive,
+// so SQLite never sees concurrent writers. A side effect: "current facts"
+// context fed to concurrently-in-flight batches may be a few facts stale
+// relative to strictly sequential Run — the same tradeoff any
+// batched/parallel supersession pipeline makes.
 //
-// A chunk whose Distill call errors is retried up to cfg.MaxRetries times
+// A batch whose Distill call errors is retried up to cfg.MaxRetries times
 // with retryBackoff between attempts, still within this same call — Ollama
 // cloud returns a plain 429 (no Retry-After) once concurrent in-flight
 // requests exceed roughly 20, and without this a high-concurrency run loses
-// a large fraction of its chunks to rate limiting instead of just slowing
-// down. A chunk still failing after the retry budget is left unmarked, same
-// as before — picked up on the next Run.
+// a large fraction of its batches to rate limiting instead of just slowing
+// down. A batch still failing after the retry budget is left unmarked (all
+// its chunks pending again), same as before — picked up on the next Run.
 //
-// If cfg.CircuitBreaker consecutive chunks each exhaust their retry budget,
-// Run stops dispatching further chunks (already-in-flight ones are allowed
-// to finish, same "graceful, not abrupt" treatment as ctx cancellation) and
-// returns ErrCircuitBreaker. External cancellation of ctx itself (e.g. the
-// caller wiring SIGINT/SIGTERM via signal.NotifyContext) is handled the same
-// way and returns ctx.Err(). Either way, every chunk marked distilled before
-// the stop is durable — nothing to "resume" beyond calling Run again later;
-// ChunksWithoutFacts will simply pick up where this call left off.
+// If cfg.CircuitBreaker consecutive batches each exhaust their retry
+// budget, Run stops dispatching further batches (already-in-flight ones are
+// allowed to finish, same "graceful, not abrupt" treatment as ctx
+// cancellation) and returns ErrCircuitBreaker. External cancellation of ctx
+// itself (e.g. the caller wiring SIGINT/SIGTERM via signal.NotifyContext)
+// is handled the same way and returns ctx.Err(). Either way, every chunk
+// marked distilled before the stop is durable — nothing to "resume" beyond
+// calling Run again later; ChunksWithoutFacts will simply pick up where
+// this call left off.
 //
 // "Consecutive" is counted in outcome-arrival order, not dispatch order —
-// under Concurrency>1 a still-in-flight chunk dispatched before a failing
+// under Concurrency>1 a still-in-flight batch dispatched before a failing
 // streak can report success afterwards and reset the count. In a genuine
 // persistent outage this only delays the trip by at most Concurrency-1
 // extra failures, never masks it (verified: Concurrency=8, CircuitBreaker=3
@@ -363,6 +421,20 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	}
 	total := len(pending)
 
+	// Group the pending chunks into consecutive batches (in
+	// ChunksWithoutFacts order) of cfg.BatchSize; <=1 keeps the original
+	// one-chunk-per-call batches. A trailing partial batch is fine — the
+	// model just sees fewer numbered chunks that call.
+	batchSize := cfg.BatchSize
+	if batchSize < 1 {
+		batchSize = 1
+	}
+	batches := make([][]db.PendingFactChunk, 0, (total+batchSize-1)/batchSize)
+	for i := 0; i < total; i += batchSize {
+		end := min(i+batchSize, total)
+		batches = append(batches, pending[i:end])
+	}
+
 	concurrency := cfg.Concurrency
 	if concurrency < 1 {
 		concurrency = 1
@@ -376,7 +448,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
-	jobs := make(chan db.PendingFactChunk)
+	jobs := make(chan []db.PendingFactChunk)
 	outcomes := make(chan fetchOutcome)
 
 	var wg sync.WaitGroup
@@ -384,13 +456,13 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			for p := range jobs {
+			for batch := range jobs {
 				if runCtx.Err() != nil {
 					return
 				}
 				existing, err := db.CurrentFacts(d, cfg.ContextCap+1)
 				if err != nil {
-					outcomes <- fetchOutcome{chunk: p, err: err}
+					outcomes <- fetchOutcome{batch: batch, err: err}
 					continue
 				}
 				// ContextCap exceeded: omit context and skip
@@ -402,6 +474,10 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				if contextExceeded {
 					promptContext = nil
 				}
+				contents := make([]string, len(batch))
+				for i, p := range batch {
+					contents[i] = p.Content
+				}
 				// context.Background(), not runCtx: distill is exempt from
 				// the caller's deadline (see doc comment above) — runCtx
 				// only governs cancellation between chunks/retries, an
@@ -409,7 +485,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				var candidates []Candidate
 				var derr error
 				for attempt := 0; ; attempt++ {
-					candidates, derr = cli.Distill(context.Background(), p.Content, promptContext)
+					candidates, derr = cli.Distill(context.Background(), contents, promptContext)
 					if derr == nil || attempt >= cfg.MaxRetries {
 						break
 					}
@@ -422,7 +498,7 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 					}
 				}
 				outcomes <- fetchOutcome{
-					chunk: p, candidates: candidates, err: derr,
+					batch: batch, candidates: candidates, err: derr,
 					promptContext: promptContext, contextExceeded: contextExceeded,
 				}
 			}
@@ -430,9 +506,9 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 	}
 	go func() {
 		defer close(jobs)
-		for _, p := range pending {
+		for _, b := range batches {
 			select {
-			case jobs <- p:
+			case jobs <- b:
 			case <-runCtx.Done():
 				return
 			}
@@ -443,16 +519,19 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		close(outcomes)
 	}()
 
-	done := 0
+	// chunksDone tracks resolved chunks (not batches) so OnProgress's
+	// done/total stay in chunk units regardless of BatchSize.
+	chunksDone := 0
 	// consecutiveFailures and breakerTripped, like res itself, are only
 	// ever touched here in Run's own single outcome-processing goroutine —
 	// never by a worker — so no locking is needed.
 	var consecutiveFailures int
 	var breakerTripped bool
 	for oc := range outcomes {
-		done++
+		chunksDone += len(oc.batch)
 		if oc.err != nil {
-			res.Failed++ // chunk not marked — retried on the next run
+			// Batch not marked — all its chunks retried on the next run.
+			res.Failed += len(oc.batch)
 			if cfg.CircuitBreaker > 0 {
 				consecutiveFailures++
 				if consecutiveFailures >= cfg.CircuitBreaker && !breakerTripped {
@@ -461,12 +540,12 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 				}
 			}
 			if cfg.OnProgress != nil {
-				cfg.OnProgress(done, total, res)
+				cfg.OnProgress(chunksDone, total, res)
 			}
 			continue
 		}
 		consecutiveFailures = 0
-		res.ChunksDistilled++
+		res.ChunksDistilled += len(oc.batch)
 
 		allowedIDs := make(map[int64]bool, len(oc.promptContext))
 		for _, f := range oc.promptContext {
@@ -474,24 +553,34 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		}
 
 		now := time.Now().UTC().Format(time.RFC3339)
-		// storeFailed tracks whether any candidate for this chunk hit a DB
+		// storeFailed tracks whether any candidate for this batch hit a DB
 		// error (InsertFact/SupersedeFact) rather than a confidence-gate
-		// discard. On a store failure the chunk is left unmarked so it's
-		// retried on the next run, same as a Distill call failure above —
-		// a transient DB error must not permanently drop a candidate fact.
+		// discard. On a store failure the whole batch is left unmarked so
+		// it's retried on the next run, same as a Distill call failure
+		// above — a transient DB error must not permanently drop a
+		// candidate fact.
 		var storeFailed bool
 		for _, c := range oc.candidates {
 			if c.Confidence < cfg.Threshold {
 				res.BelowThreshold++
 				continue
 			}
+			// Attribute the fact to its chunk: the model self-reports a
+			// 1-based chunk_index into the numbered list it was given. An
+			// absent or out-of-range index falls back to the first chunk
+			// of the batch — the fact is stored (not dropped) rather than
+			// lost to an off-by-one in the model's counting.
+			src := oc.batch[0]
+			if c.ChunkIndex >= 1 && c.ChunkIndex <= len(oc.batch) {
+				src = oc.batch[c.ChunkIndex-1]
+			}
 			newID, err := db.InsertFact(d, internal.Fact{
 				Subject:       c.Subject,
 				Predicate:     c.Predicate,
 				Object:        c.Object,
 				Confidence:    c.Confidence,
-				SourceChunkID: oc.chunk.ID,
-				SessionDate:   oc.chunk.SessionDate,
+				SourceChunkID: src.ID,
+				SessionDate:   src.SessionDate,
 				CreatedAt:     now,
 			})
 			if err != nil {
@@ -522,14 +611,16 @@ func Run(ctx context.Context, d *sql.DB, cli Distiller, cfg Config) (Result, err
 		}
 		if !storeFailed {
 			// A MarkChunkDistilled error here is a DB-level failure, not a
-			// content problem — the chunk is retried next run just like the
+			// content problem — the batch is retried next run just like the
 			// other failure paths above, rather than aborting the fan-out.
-			if err := db.MarkChunkDistilled(d, oc.chunk.ID, now); err != nil {
-				res.Failed++
+			for _, p := range oc.batch {
+				if err := db.MarkChunkDistilled(d, p.ID, now); err != nil {
+					res.Failed++
+				}
 			}
 		}
 		if cfg.OnProgress != nil {
-			cfg.OnProgress(done, total, res)
+			cfg.OnProgress(chunksDone, total, res)
 		}
 	}
 	if breakerTripped {

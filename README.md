@@ -145,6 +145,12 @@ safeguards).
 session-indexer distill --db .claude/sessions.db --threshold 0.7
 # → Distilled 12 chunks: 5 facts stored, 3 below threshold, 1 superseded
 
+# Cost dials for Ollama Cloud (billed by GPU-time per call, not per token):
+# the facts-context block dominates each prompt, and one call per chunk
+# multiplies fast. Smaller context + batched chunks ≈ N× fewer, cheaper
+# calls; both default to the original behavior (200 / 1).
+session-indexer distill --db .claude/sessions.db --context-cap 30 --batch 4
+
 # Query
 session-indexer facts search "implementation status" --db .claude/sessions.db
 # → [7] session-indexer | has | 33 merged PRs (confidence 0.92)

@@ -12,6 +12,16 @@ full per-PR history.
 
 ## [Unreleased]
 
+### Added
+- `distill --context-cap` (default 200, previously hardcoded): the per-call
+  facts-context block dominates prompt size — and Ollama Cloud bills by
+  GPU-time, not per token — so the cap is now a tunable cost/quality dial.
+- `distill --batch` (default 1, previously the only behavior): groups N
+  pending chunks into one numbered-chunks Ollama call with per-fact
+  `chunk_index` attribution, cutting call count ~N-fold. The batch retries,
+  fails, and gets marked distilled as a unit; a `--batch 1` call sends the
+  byte-identical pre-batching prompt.
+
 ## [0.3.0] - 2026-08-27
 
 ### Added

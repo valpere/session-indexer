@@ -353,23 +353,27 @@ periodic review unless something distills and tombstones it at index time.
 ### Distill flow
 
 ```
-session-indexer distill --db <path> [--threshold 0.7]
+session-indexer distill --db <path> [--threshold 0.7] [--context-cap 200] [--batch 1]
     │
-    └─ for each chunk in ChunksWithoutFacts (distilled_chunks marker):
+    └─ for each batch of BatchSize chunks in ChunksWithoutFacts
+         │  (distilled_chunks marker; batch=1 is the original behavior):
          │
          ├─ CurrentFacts(limit=ContextCap) — bounded context of
          │  non-tombstoned facts, fed to the model for supersession judgment
          │
-         ├─ POST /api/generate  { model: OLLAMA_DISTILL_MODEL, chunk, existing facts }
-         │  → candidates: [{subject, predicate, object, confidence, supersedes_ids}]
+         ├─ POST /api/generate  { model: OLLAMA_DISTILL_MODEL, chunks, existing facts }
+         │  → candidates: [{subject, predicate, object, confidence,
+         │                  chunk_index, supersedes_ids}]
          │
          ├─ per candidate:
          │    confidence < threshold?  → discard (BelowThreshold++)
-         │    else → InsertFact; for each supersedes_ids entry validated
-         │           against the context actually given → SupersedeFact
+         │    else → InsertFact (attributed to the chunk its chunk_index
+         │           names; absent/out-of-range index → the batch's first
+         │           chunk, never dropped); for each supersedes_ids entry
+         │           validated against the context actually given → SupersedeFact
          │
-         └─ MarkChunkDistilled — regardless of fact count (zero-fact chunks
-            must not be re-distilled forever)
+         └─ MarkChunkDistilled per chunk in the batch — regardless of fact
+            count (zero-fact chunks must not be re-distilled forever)
 ```
 
 `distill` is a separate, manually-invoked subcommand — it never hooks into
@@ -410,10 +414,20 @@ Safeguards:
   `superseded_by` edge; `facts supersede <new> <old>` exists as a manual
   audit/override backstop using the same `SupersedeFact` function
 
-If the current-facts set exceeds `ContextCap` (200), the distill call omits
-context entirely for that chunk and auto-supersession is skipped for it —
-an oversized context blows the prompt budget and the model has nothing
-reliable to judge supersession against.
+If the current-facts set exceeds `ContextCap` (`--context-cap`, default
+200), the distill call omits context entirely for that batch and
+auto-supersession is skipped for it — an oversized context blows the prompt
+budget and the model has nothing reliable to judge supersession against.
+The cap is exposed as a flag because the context block dominates each
+call's prompt, and Ollama Cloud bills by GPU-time per call: a smaller cap
+is a direct per-call cost cut at some supersession-recall cost.
+
+`--batch` groups consecutive pending chunks into one numbered-chunks call
+(the response schema gains per-fact `chunk_index` for attribution). The
+whole batch retries, fails, and gets marked as a unit; `--batch 1` sends the
+byte-identical pre-batching prompt. Batching exists for the same billing
+reason as `--context-cap`: N chunks in one call cost far less than N
+separate calls, since the shared context block is paid once per call.
 
 ### Tombstone / supersedes resolution
 
