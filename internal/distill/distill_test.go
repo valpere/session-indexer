@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -46,7 +47,7 @@ func TestDistillParsesFacts(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientURL(srv.URL, "qwen2.5:latest")
-	candidates, err := c.Distill(context.Background(), "chunk text", nil)
+	candidates, err := c.Distill(context.Background(), []string{"chunk text"}, nil)
 	if err != nil {
 		t.Fatalf("Distill: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestDistillParsesFencedFacts(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientURL(srv.URL, "gemma4:31b-cloud")
-	candidates, err := c.Distill(context.Background(), "chunk text", nil)
+	candidates, err := c.Distill(context.Background(), []string{"chunk text"}, nil)
 	if err != nil {
 		t.Fatalf("Distill: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestDistillSurfacesHTTPStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientURL(srv.URL, "qwen2.5:latest")
-	_, err := c.Distill(context.Background(), "chunk", nil)
+	_, err := c.Distill(context.Background(), []string{"chunk"}, nil)
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
 	}
@@ -124,7 +125,7 @@ func TestDistillRespectsContextCancellation(t *testing.T) {
 	c := NewClientURL(srv.URL, "qwen2.5:latest")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
-	_, err := c.Distill(ctx, "chunk", nil)
+	_, err := c.Distill(ctx, []string{"chunk"}, nil)
 	if err == nil {
 		t.Fatal("expected error for cancelled context, got nil")
 	}
@@ -136,7 +137,7 @@ func TestDistillEmptyResponseGuard(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientURL(srv.URL, "qwen2.5:latest")
-	_, err := c.Distill(context.Background(), "chunk", nil)
+	_, err := c.Distill(context.Background(), []string{"chunk"}, nil)
 	if err == nil {
 		t.Fatal("expected error for empty response, got nil")
 	}
@@ -146,15 +147,15 @@ func TestDistillEmptyResponseGuard(t *testing.T) {
 // responses, one per Distill call (matching call order).
 type stubDistiller struct {
 	avail bool
-	calls []func(chunk string, existing []internal.Fact) ([]Candidate, error)
+	calls []func(chunks []string, existing []internal.Fact) ([]Candidate, error)
 	n     int
 }
 
 func (s *stubDistiller) Available() bool { return s.avail }
-func (s *stubDistiller) Distill(_ context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
+func (s *stubDistiller) Distill(_ context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error) {
 	f := s.calls[s.n]
 	s.n++
-	return f(chunk, existing)
+	return f(chunks, existing)
 }
 
 // fixedDistiller is a concurrency-safe Distiller test double: every call
@@ -163,12 +164,12 @@ func (s *stubDistiller) Distill(_ context.Context, chunk string, existing []inte
 // meaningful (workers race to call Distill in unpredictable order).
 type fixedDistiller struct {
 	avail bool
-	fn    func(chunk string, existing []internal.Fact) ([]Candidate, error)
+	fn    func(chunks []string, existing []internal.Fact) ([]Candidate, error)
 }
 
 func (f *fixedDistiller) Available() bool { return f.avail }
-func (f *fixedDistiller) Distill(_ context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
-	return f.fn(chunk, existing)
+func (f *fixedDistiller) Distill(_ context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error) {
+	return f.fn(chunks, existing)
 }
 
 // flakyDistiller fails its first failCount calls (thread-safe via atomic
@@ -178,16 +179,16 @@ type flakyDistiller struct {
 	avail     bool
 	failCount int64
 	calls     int64
-	succeed   func(chunk string, existing []internal.Fact) ([]Candidate, error)
+	succeed   func(chunks []string, existing []internal.Fact) ([]Candidate, error)
 }
 
 func (f *flakyDistiller) Available() bool { return f.avail }
-func (f *flakyDistiller) Distill(_ context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
+func (f *flakyDistiller) Distill(_ context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error) {
 	n := atomic.AddInt64(&f.calls, 1)
 	if n <= f.failCount {
 		return nil, errors.New("simulated transient failure")
 	}
-	return f.succeed(chunk, existing)
+	return f.succeed(chunks, existing)
 }
 
 // Package-level counter, safe only because no test in this suite (or this
@@ -219,8 +220,8 @@ func openTestDB(t *testing.T) *sql.DB {
 func TestRunAppliesConfidenceGate(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk one content here", "2026-07-01")
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			return []Candidate{
 				{Subject: "s", Predicate: "p", Object: "high", Confidence: 0.9},
 				{Subject: "s", Predicate: "p", Object: "low", Confidence: 0.4},
@@ -240,8 +241,8 @@ func TestRunAppliesSupersession(t *testing.T) {
 	d := openTestDB(t)
 	// First chunk establishes a fact.
 	seedChunk(t, d, "old status chunk", "2026-07-01")
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			return []Candidate{{Subject: "project", Predicate: "status", Object: "not started", Confidence: 0.9}}, nil
 		},
 	}}
@@ -256,8 +257,8 @@ func TestRunAppliesSupersession(t *testing.T) {
 
 	// Second chunk supersedes the first, citing the id it was given.
 	seedChunk(t, d, "new status chunk", "2026-07-02")
-	cli2 := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(_ string, given []internal.Fact) ([]Candidate, error) {
+	cli2 := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func(_ []string, given []internal.Fact) ([]Candidate, error) {
 			if len(given) != 1 || given[0].ID != oldID {
 				t.Fatalf("expected context to contain old fact id %d, got %+v", oldID, given)
 			}
@@ -281,8 +282,8 @@ func TestRunAppliesSupersession(t *testing.T) {
 func TestRunMarksChunkOnZeroFacts(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk with nothing extractable", "2026-07-01")
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) { return nil, nil },
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) { return nil, nil },
 	}}
 	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200})
 	if err != nil {
@@ -300,8 +301,8 @@ func TestRunMarksChunkOnZeroFacts(t *testing.T) {
 func TestRunLeavesChunkOnError(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk that fails distillation", "2026-07-01")
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			return nil, context.DeadlineExceeded
 		},
 	}}
@@ -325,7 +326,7 @@ func TestRunLeavesChunkOnError(t *testing.T) {
 func TestRunRetriesOnFailureThenSucceeds(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk that succeeds on the third attempt", "2026-07-01")
-	cli := &flakyDistiller{avail: true, failCount: 2, succeed: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &flakyDistiller{avail: true, failCount: 2, succeed: func([]string, []internal.Fact) ([]Candidate, error) {
 		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
 	}}
 	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, MaxRetries: 2})
@@ -382,8 +383,8 @@ func TestRunLeavesChunkOnInsertFactError(t *testing.T) {
 	if _, err := d.Exec(`DROP TABLE facts_fts`); err != nil {
 		t.Fatalf("drop facts_fts table: %v", err)
 	}
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
 		},
 	}}
@@ -413,8 +414,8 @@ func TestRunUsesBackgroundContextForDistillCall(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk checking context independence", "2026-07-01")
 	var gotCtx context.Context
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			return nil, nil
 		},
 	}}
@@ -437,16 +438,16 @@ type capturingDistiller struct {
 }
 
 func (c *capturingDistiller) Available() bool { return c.inner.Available() }
-func (c *capturingDistiller) Distill(ctx context.Context, chunk string, existing []internal.Fact) ([]Candidate, error) {
+func (c *capturingDistiller) Distill(ctx context.Context, chunks []string, existing []internal.Fact) ([]Candidate, error) {
 	*c.captured = ctx
-	return c.inner.Distill(ctx, chunk, existing)
+	return c.inner.Distill(ctx, chunks, existing)
 }
 
 func TestRunRejectsSupersedeIDOutsideContext(t *testing.T) {
 	d := openTestDB(t)
 	seedChunk(t, d, "chunk citing an id it was never given", "2026-07-01")
-	cli := &stubDistiller{avail: true, calls: []func(string, []internal.Fact) ([]Candidate, error){
-		func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &stubDistiller{avail: true, calls: []func([]string, []internal.Fact) ([]Candidate, error){
+		func([]string, []internal.Fact) ([]Candidate, error) {
 			// existing is empty (no prior facts), yet the model claims to
 			// supersede id 999 — must be rejected, not applied blindly.
 			return []Candidate{{Subject: "s", Predicate: "p", Object: "o",
@@ -467,7 +468,7 @@ func TestRunRespectsLimit(t *testing.T) {
 	seedChunk(t, d, "chunk one", "2026-07-01")
 	seedChunk(t, d, "chunk two", "2026-07-02")
 	seedChunk(t, d, "chunk three", "2026-07-03")
-	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &fixedDistiller{avail: true, fn: func([]string, []internal.Fact) ([]Candidate, error) {
 		return nil, nil
 	}}
 	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, Limit: 2})
@@ -495,7 +496,7 @@ func TestRunConcurrencyProcessesAllChunks(t *testing.T) {
 		seedChunk(t, d, "concurrent chunk", "2026-07-01")
 	}
 	var calls int64
-	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &fixedDistiller{avail: true, fn: func([]string, []internal.Fact) ([]Candidate, error) {
 		atomic.AddInt64(&calls, 1)
 		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
 	}}
@@ -521,7 +522,7 @@ func TestRunProgressCallback(t *testing.T) {
 	for i := 0; i < n; i++ {
 		seedChunk(t, d, "chunk", "2026-07-01")
 	}
-	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &fixedDistiller{avail: true, fn: func([]string, []internal.Fact) ([]Candidate, error) {
 		return nil, nil
 	}}
 	var mu sync.Mutex
@@ -572,7 +573,7 @@ func TestRunCtxCancellationDuringConcurrentRun(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &fixedDistiller{avail: true, fn: func([]string, []internal.Fact) ([]Candidate, error) {
 		time.Sleep(20 * time.Millisecond)
 		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
 	}}
@@ -659,7 +660,7 @@ func TestRunCircuitBreakerResetsOnSuccess(t *testing.T) {
 		seedChunk(t, d, "chunk", "2026-07-01")
 	}
 	var calls int64
-	cli := &fixedDistiller{avail: true, fn: func(string, []internal.Fact) ([]Candidate, error) {
+	cli := &fixedDistiller{avail: true, fn: func([]string, []internal.Fact) ([]Candidate, error) {
 		n := atomic.AddInt64(&calls, 1)
 		if n%3 == 0 {
 			return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
@@ -697,5 +698,290 @@ func TestRunCircuitBreakerDisabledByDefault(t *testing.T) {
 	}
 	if res.Failed != n {
 		t.Fatalf("res.Failed = %d, want %d (every chunk attempted)", res.Failed, n)
+	}
+}
+
+// TestBuildPromptSingleChunkMatchesOriginalPrompt pins the single-chunk
+// prompt byte-for-byte: batching must not change what a one-chunk call
+// sends, so every existing deployment (BatchSize 1) keeps the exact prompt
+// its model was tuned on. Any intentional prompt change must update this
+// golden string deliberately, not drift into it.
+func TestBuildPromptSingleChunkMatchesOriginalPrompt(t *testing.T) {
+	got := buildPrompt([]string{"body text"}, []internal.Fact{
+		{ID: 7, Subject: "s", Predicate: "p", Object: "o"},
+	})
+	want := `You extract atomic, durable facts from a single Claude Code conversation
+chunk. The chunk may be in English or Ukrainian or both — extract facts in
+the language they are stated; do not translate.
+
+Return ONLY JSON: {"facts":[{"subject":"...","predicate":"...","object":"...",
+"confidence":0.0,"supersedes_ids":[]}]}
+
+Each fact is a subject-predicate-object triple about the USER, the PROJECT,
+its CODE, DECISIONS, or CONVENTIONS. Extract only durable, reusable facts —
+not transient chit-chat, not restatements of the assistant's own reasoning.
+
+Confidence: explicitly stated as current truth → 0.9+; clearly implied →
+0.5-0.8; speculation/hedged/uncertain → below 0.5. Assign honestly —
+low-confidence facts will be discarded.
+
+You are given the project's CURRENT KNOWN FACTS (id + statement). If a fact
+you extract makes one of them false or out of date (status change, reversed
+decision, corrected value about the SAME subject), put that id in
+"supersedes_ids". Only use ids from this list. If nothing is superseded, use
+an empty array. Do not supersede a fact that is merely related but still true.
+
+CURRENT KNOWN FACTS:
+ - [7] s | p | o
+
+CHUNK:
+body text`
+	if got != want {
+		t.Fatalf("single-chunk prompt drifted from the pre-batching original:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestBuildPromptBatchNumbersChunks verifies the multi-chunk prompt carries
+// the numbered-chunks layout and chunk_index schema the model needs for
+// per-fact attribution, and that an empty facts context renders "(none yet)".
+func TestBuildPromptBatchNumbersChunks(t *testing.T) {
+	got := buildPrompt([]string{"alpha", "beta"}, nil)
+	for _, want := range []string{
+		`"chunk_index":1`,
+		"CHUNKS:\n[1] alpha\n\n[2] beta",
+		"CURRENT KNOWN FACTS:\n(none yet)",
+		"numbered Claude Code conversation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("batch prompt missing %q; prompt:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "CHUNK:\n") {
+		t.Fatalf("batch prompt must not use the single-chunk CHUNK: section; prompt:\n%s", got)
+	}
+}
+
+// TestDistillParsesChunkIndex verifies the client surfaces the model's
+// self-reported per-fact chunk_index so Run can attribute facts to chunks
+// within a batched call.
+func TestDistillParsesChunkIndex(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"response":"{\"facts\":[{\"subject\":\"s\",\"predicate\":\"p\",\"object\":\"o\",\"confidence\":0.9,\"chunk_index\":2,\"supersedes_ids\":[]}]}"}`))
+	}))
+	defer srv.Close()
+	c := NewClientURL(srv.URL, "qwen2.5:latest")
+	candidates, err := c.Distill(context.Background(), []string{"one", "two"}, nil)
+	if err != nil {
+		t.Fatalf("Distill: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].ChunkIndex != 2 {
+		t.Fatalf("candidates = %+v, want one with ChunkIndex=2", candidates)
+	}
+}
+
+// TestRunBatchesChunksPerCall seeds 5 chunks and runs at BatchSize 4:
+// exactly 2 Distill calls (a full batch of 4 plus a partial 1), all 5
+// chunks marked, and every fact attributed to the chunk its chunk_index
+// names — not lumped onto the first chunk of the batch.
+func TestRunBatchesChunksPerCall(t *testing.T) {
+	d := openTestDB(t)
+	var ids []int64
+	for i := 0; i < 5; i++ {
+		ids = append(ids, seedChunk(t, d, fmt.Sprintf("chunk %d content", i), "2026-07-01"))
+	}
+	var calls int64
+	cli := &fixedDistiller{avail: true, fn: func(chunks []string, _ []internal.Fact) ([]Candidate, error) {
+		atomic.AddInt64(&calls, 1)
+		if len(chunks) != 4 && len(chunks) != 1 {
+			t.Errorf("Distill call got %d chunks, want 4 (full batch) or 1 (partial last batch)", len(chunks))
+		}
+		// Subject = the chunk's own content, unique across batches, so
+		// attribution can be asserted per chunk even though chunk indexes
+		// restart at 1 in each call.
+		cands := make([]Candidate, 0, len(chunks))
+		for i := range chunks {
+			cands = append(cands, Candidate{
+				Subject: chunks[i], Predicate: "p", Object: "o",
+				Confidence: 0.9, ChunkIndex: i + 1,
+			})
+		}
+		return cands, nil
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, BatchSize: 4})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("Distill called %d times, want 2 (one per batch)", got)
+	}
+	if res.ChunksDistilled != 5 || res.FactsInserted != 5 || res.Failed != 0 {
+		t.Fatalf("res = %+v, want ChunksDistilled=5 FactsInserted=5 Failed=0", res)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after batched run = %+v err=%v, want none (partial batch included)", pending, err)
+	}
+	// Per-fact attribution: the fact extracted from chunk i (subject = its
+	// content) must cite that chunk's id.
+	facts, err := db.CurrentFacts(d, 10)
+	if err != nil {
+		t.Fatalf("CurrentFacts: %v", err)
+	}
+	seen := map[string]int64{}
+	for _, f := range facts {
+		seen[f.Subject] = f.SourceChunkID
+	}
+	for i, id := range ids {
+		subj := fmt.Sprintf("chunk %d content", i)
+		if seen[subj] != id {
+			t.Errorf("fact %q attributed to chunk %d, want %d", subj, seen[subj], id)
+		}
+	}
+}
+
+// TestRunLeavesBatchOnInsertFactError is the batched counterpart of
+// TestRunLeavesChunkOnInsertFactError: a DB-level failure storing any
+// candidate fact in a batch must leave the WHOLE batch unmarked, so every
+// chunk in it is retried on the next run — the batch is the unit of
+// marking, and a transient DB error on one candidate must not silently
+// mark its (equally unstored) siblings as done.
+func TestRunLeavesBatchOnInsertFactError(t *testing.T) {
+	d := openTestDB(t)
+	for i := 0; i < 4; i++ {
+		seedChunk(t, d, "chunk whose fact fails to store", "2026-07-01")
+	}
+	// Drop facts_fts (the trigger target for INSERT INTO facts) so
+	// InsertFact fails deterministically inside Run — same fault-injection
+	// trick as TestRunLeavesChunkOnInsertFactError, which explains why it
+	// works without touching production code.
+	if _, err := d.Exec(`DROP TABLE facts_fts`); err != nil {
+		t.Fatalf("drop facts_fts table: %v", err)
+	}
+	cli := &fixedDistiller{avail: true, fn: func(chunks []string, _ []internal.Fact) ([]Candidate, error) {
+		if len(chunks) != 4 {
+			t.Errorf("Distill call got %d chunks, want the full batch of 4", len(chunks))
+		}
+		return []Candidate{{Subject: "s", Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, BatchSize: 4})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.FactsInserted != 0 {
+		t.Fatalf("res.FactsInserted = %d, want 0", res.FactsInserted)
+	}
+	if res.Failed < 1 {
+		t.Fatalf("res.Failed = %d, want >= 1 (the failed insert must be counted)", res.Failed)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 4 {
+		t.Fatalf("pending after InsertFact failure in batch = %+v err=%v, want all 4 (whole batch retried, not just the failing candidate)", pending, err)
+	}
+}
+
+// TestRunBatchFailsAsUnit verifies a batch whose Distill call fails after
+// its retry budget leaves ALL its chunks unmarked (retried on the next run)
+// and counts every chunk as failed — batching must not silently drop a
+// chunk whose extraction succeeded only in a call that then errored, which
+// is why the whole batch is the unit of retry and marking.
+func TestRunBatchFailsAsUnit(t *testing.T) {
+	d := openTestDB(t)
+	for i := 0; i < 4; i++ {
+		seedChunk(t, d, "chunk in a failing batch", "2026-07-01")
+	}
+	var calls int64
+	cli := &fixedDistiller{avail: true, fn: func(_ []string, _ []internal.Fact) ([]Candidate, error) {
+		atomic.AddInt64(&calls, 1)
+		return nil, errors.New("simulated batch failure")
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, BatchSize: 4, MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Failed != 4 || res.ChunksDistilled != 0 {
+		t.Fatalf("res = %+v, want Failed=4 ChunksDistilled=0", res)
+	}
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("Distill called %d times, want 2 (1 initial + 1 retry for the whole batch)", got)
+	}
+	pending, err := db.ChunksWithoutFacts(d)
+	if err != nil || len(pending) != 4 {
+		t.Fatalf("pending after failed batch = %+v err=%v, want all 4 (batch retried as a unit next run)", pending, err)
+	}
+}
+
+// TestRunInvalidChunkIndexAttributedToFirstChunk covers the model's
+// chunk_index being absent (0) or out of range: the fact is stored anyway,
+// attributed to the batch's first chunk, rather than dropped or misindexed.
+func TestRunInvalidChunkIndexAttributedToFirstChunk(t *testing.T) {
+	d := openTestDB(t)
+	firstID := seedChunk(t, d, "first chunk in batch", "2026-07-01")
+	seedChunk(t, d, "second chunk in batch", "2026-07-01")
+	seedChunk(t, d, "third chunk in batch", "2026-07-01")
+	cli := &fixedDistiller{avail: true, fn: func(_ []string, _ []internal.Fact) ([]Candidate, error) {
+		return []Candidate{
+			{Subject: "absent", Predicate: "p", Object: "o", Confidence: 0.9, ChunkIndex: 0},
+			{Subject: "out-of-range", Predicate: "p", Object: "o", Confidence: 0.9, ChunkIndex: 99},
+		}, nil
+	}}
+	res, err := Run(context.Background(), d, cli, Config{Threshold: 0.7, ContextCap: 200, BatchSize: 3})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.FactsInserted != 2 {
+		t.Fatalf("res.FactsInserted = %d, want 2 (invalid index must not drop the fact)", res.FactsInserted)
+	}
+	facts, err := db.CurrentFacts(d, 10)
+	if err != nil {
+		t.Fatalf("CurrentFacts: %v", err)
+	}
+	for _, f := range facts {
+		if f.SourceChunkID != firstID {
+			t.Errorf("fact %q attributed to chunk %d, want first chunk %d", f.Subject, f.SourceChunkID, firstID)
+		}
+	}
+}
+
+// TestRunRespectsContextCap verifies ContextCap plumbing at both edges:
+// facts at or under the cap are passed to the distiller as context, and
+// more facts than the cap disables the context entirely (the
+// contextExceeded path) rather than sending a truncated slice.
+func TestRunRespectsContextCap(t *testing.T) {
+	d := openTestDB(t)
+	// Phase 1: establish 2 live facts via a normal run.
+	for i := 0; i < 2; i++ {
+		seedChunk(t, d, fmt.Sprintf("fact-bearing chunk %d", i), "2026-07-01")
+	}
+	store := &fixedDistiller{avail: true, fn: func(chunks []string, _ []internal.Fact) ([]Candidate, error) {
+		return []Candidate{{Subject: chunks[0], Predicate: "p", Object: "o", Confidence: 0.9}}, nil
+	}}
+	if _, err := Run(context.Background(), d, store, Config{Threshold: 0.7, ContextCap: 200}); err != nil {
+		t.Fatalf("Run seed: %v", err)
+	}
+
+	// Phase 2: a new chunk at ContextCap 2 — the 2 existing facts fit, so
+	// the distiller must receive all of them.
+	seedChunk(t, d, "chunk at cap", "2026-07-02")
+	atCap := &fixedDistiller{avail: true, fn: func(_ []string, given []internal.Fact) ([]Candidate, error) {
+		if len(given) != 2 {
+			t.Errorf("existing context = %d facts, want 2 (ContextCap 2 with 2 live facts)", len(given))
+		}
+		return nil, nil
+	}}
+	if _, err := Run(context.Background(), d, atCap, Config{Threshold: 0.7, ContextCap: 2}); err != nil {
+		t.Fatalf("Run at cap: %v", err)
+	}
+
+	// Phase 3: ContextCap 1 against 2+ live facts — exceeded, so the
+	// distiller must get no context at all (and supersession is skipped).
+	seedChunk(t, d, "chunk over cap", "2026-07-02")
+	overCap := &fixedDistiller{avail: true, fn: func(_ []string, given []internal.Fact) ([]Candidate, error) {
+		if given != nil {
+			t.Errorf("existing context = %d facts, want none (ContextCap 1 with 2+ live facts)", len(given))
+		}
+		return nil, nil
+	}}
+	if _, err := Run(context.Background(), d, overCap, Config{Threshold: 0.7, ContextCap: 1}); err != nil {
+		t.Fatalf("Run over cap: %v", err)
 	}
 }

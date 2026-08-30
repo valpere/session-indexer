@@ -111,7 +111,7 @@ happens anyway.
 
 ### Facts Layer
 
-Distilled subject-predicate-object claims, separate from raw-text `search`. `distill` (manual, never hooked into `mine`/Stop-hook budget — `context.Background()`, 120s HTTP timeout) calls Ollama `/api/generate` (`OLLAMA_DISTILL_MODEL` env or `--model` flag, default `glm-5.2:cloud`) per chunk not yet in `distilled_chunks`, feeding it a bounded `CurrentFacts` context (cap 200) for supersession judgment.
+Distilled subject-predicate-object claims, separate from raw-text `search`. `distill` (manual, never hooked into `mine`/Stop-hook budget — `context.Background()`, 120s HTTP timeout) calls Ollama `/api/generate` (`OLLAMA_DISTILL_MODEL` env or `--model` flag, default `glm-5.2:cloud`) for chunks not yet in `distilled_chunks` — `--batch N` (default 1) groups N chunks into one numbered-chunks call with per-fact `chunk_index` attribution (Ollama Cloud bills per call) — feeding it a bounded `CurrentFacts` context (`--context-cap`, default 200) for supersession judgment.
 
 Confidence gate is a **deterministic Go check** (default 0.7), not an LLM-enforced instruction — the model's self-reported confidence is advisory input only. Supersession is judged automatically by the model, but the model may only cite fact ids from the context it was actually given (validated in Go); `SupersedeFact` no-ops (not an error) on an already-tombstoned fact. `facts supersede <new> <old>` is a manual audit/override backstop using the same function. See `docs/architecture.md`'s "Facts Layer" section for the full design rationale (deliberate deviations from litopys).
 
