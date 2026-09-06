@@ -162,17 +162,21 @@ chat_content() {
 
 # Extract token counts from a response.
 # Returns "PROMPT_TOKENS COMPLETION_TOKENS" (space-separated).
-# Ollama responses return "null null" (no token data in /api/chat).
+# Ollama native responses return "null null" (no token data in /api/chat).
+# OpenAI-compat responses (openrouter, openai_compat) DO return .usage.
 # Usage: read pt ct < <(chat_tokens "$PROVIDER" "$RESPONSE")
 chat_tokens() {
-  if [ "$1" = "openrouter" ]; then
-    local p c
-    p=$(printf '%s' "$2" | jq -r '.usage.prompt_tokens     // empty' 2>/dev/null)
-    c=$(printf '%s' "$2" | jq -r '.usage.completion_tokens // empty' 2>/dev/null)
-    printf '%s %s' "${p:-null}" "${c:-null}"
-  else
-    printf 'null null'
-  fi
+  case "$1" in
+    openrouter|openai_compat)
+      local p c
+      p=$(printf '%s' "$2" | jq -r '.usage.prompt_tokens     // empty' 2>/dev/null)
+      c=$(printf '%s' "$2" | jq -r '.usage.completion_tokens // empty' 2>/dev/null)
+      printf '%s %s' "${p:-null}" "${c:-null}"
+      ;;
+    *)
+      printf 'null null'
+      ;;
+  esac
 }
 
 # Convenience: POST + extract content in a single call.
