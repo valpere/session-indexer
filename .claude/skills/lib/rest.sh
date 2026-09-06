@@ -141,17 +141,22 @@ chat_payload_system() {
 # Optional 5th arg: num_predict cap, Ollama branch only (default 4000).
 chat_payload_system_no_think() {
   case "$1" in
-    openrouter) openrouter_payload_system_no_think "$2" "$3" "$4" ;;
-    *)          ollama_payload_system_no_think      "$2" "$3" "$4" "$5" ;;
+    openrouter)    openrouter_payload_system_no_think "$2" "$3" "$4" ;;
+    openai_compat) openrouter_payload_system_no_think "$2" "$3" "$4" ;;
+    *)             ollama_payload_system_no_think      "$2" "$3" "$4" "$5" ;;
   esac
 }
 
 # Extract assistant content from a raw API response.
 # Usage: CONTENT=$(chat_content "$PROVIDER" "$RESPONSE")
+# Provider values:
+#   - "openrouter"    — /api/v1/chat/completions (OpenAI-compat)
+#   - "openai_compat" — same as "openrouter" (alias, more explicit at call site)
+#   - anything else   — native Ollama /api/chat
 chat_content() {
   case "$1" in
-    openrouter) openrouter_content "$2" ;;
-    *)          ollama_content     "$2" ;;
+    openrouter|openai_compat) openrouter_content "$2" ;;
+    *)                        ollama_content     "$2" ;;
   esac
 }
 
