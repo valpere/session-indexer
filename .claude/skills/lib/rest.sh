@@ -141,33 +141,42 @@ chat_payload_system() {
 # Optional 5th arg: num_predict cap, Ollama branch only (default 4000).
 chat_payload_system_no_think() {
   case "$1" in
-    openrouter) openrouter_payload_system_no_think "$2" "$3" "$4" ;;
-    *)          ollama_payload_system_no_think      "$2" "$3" "$4" "$5" ;;
+    openrouter)    openrouter_payload_system_no_think "$2" "$3" "$4" ;;
+    openai_compat) openrouter_payload_system_no_think "$2" "$3" "$4" ;;
+    *)             ollama_payload_system_no_think      "$2" "$3" "$4" "$5" ;;
   esac
 }
 
 # Extract assistant content from a raw API response.
 # Usage: CONTENT=$(chat_content "$PROVIDER" "$RESPONSE")
+# Provider values:
+#   - "openrouter"    — /api/v1/chat/completions (OpenAI-compat)
+#   - "openai_compat" — same as "openrouter" (alias, more explicit at call site)
+#   - anything else   — native Ollama /api/chat
 chat_content() {
   case "$1" in
-    openrouter) openrouter_content "$2" ;;
-    *)          ollama_content     "$2" ;;
+    openrouter|openai_compat) openrouter_content "$2" ;;
+    *)                        ollama_content     "$2" ;;
   esac
 }
 
 # Extract token counts from a response.
 # Returns "PROMPT_TOKENS COMPLETION_TOKENS" (space-separated).
-# Ollama responses return "null null" (no token data in /api/chat).
+# Ollama native responses return "null null" (no token data in /api/chat).
+# OpenAI-compat responses (openrouter, openai_compat) DO return .usage.
 # Usage: read pt ct < <(chat_tokens "$PROVIDER" "$RESPONSE")
 chat_tokens() {
-  if [ "$1" = "openrouter" ]; then
-    local p c
-    p=$(printf '%s' "$2" | jq -r '.usage.prompt_tokens     // empty' 2>/dev/null)
-    c=$(printf '%s' "$2" | jq -r '.usage.completion_tokens // empty' 2>/dev/null)
-    printf '%s %s' "${p:-null}" "${c:-null}"
-  else
-    printf 'null null'
-  fi
+  case "$1" in
+    openrouter|openai_compat)
+      local p c
+      p=$(printf '%s' "$2" | jq -r '.usage.prompt_tokens     // empty' 2>/dev/null)
+      c=$(printf '%s' "$2" | jq -r '.usage.completion_tokens // empty' 2>/dev/null)
+      printf '%s %s' "${p:-null}" "${c:-null}"
+      ;;
+    *)
+      printf 'null null'
+      ;;
+  esac
 }
 
 # Convenience: POST + extract content in a single call.
