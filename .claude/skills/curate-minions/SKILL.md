@@ -50,10 +50,11 @@ SLUG=$(basename "$(git rev-parse --show-toplevel)")
 WEEK="${1:-latest}"
 REPORTS_DIR="$HOME/wrk/common/reports/minions/$SLUG"
 if [[ "$WEEK" == "latest" ]]; then
-  # Robust selector: handles spaces/specials in path and filename.
-  # Report names are ISO-week tags + .md (no spaces by construction),
-  # but find + mtime-sort keeps the intent explicit if naming changes.
-  REPORT=$(find "$REPORTS_DIR" -maxdepth 1 -type f -name '2026-W*.md' \
+  # Robust selector: handles spaces/specials in path and filename, and
+  # doesn't hardcode a calendar year (an ISO-week filename like
+  # 2026-W01.md rolls into 2027-W## eventually — a literal "2026-"
+  # prefix would silently stop matching future reports).
+  REPORT=$(find "$REPORTS_DIR" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-W*.md' \
            -printf '%T@ %p\n' 2>/dev/null \
            | sort -rn | head -1 | cut -d' ' -f2-)
 else
