@@ -8,8 +8,9 @@ anything.
 
 - **session-indexer** — single Go binary, semantic search over Claude
   Code JSONL session transcripts. No daemon, no shared state between
-  projects, pure Go/no CGO. Six subcommands (`mine`, `search`, `embed`,
-  `stats`, `distill`, `facts`, `sessions`, `list`, `show`).
+  projects, pure Go/no CGO. Subcommands: `mine`, `search`, `embed`,
+  `stats`, `distill`, `facts` (with its own `search`/`list`/`get`/
+  `related`/`supersede` child verbs), `sessions`, `list`, `show`.
 - Deployed and actively maintained via systemd across 8+ projects
   (`~/wrk/{common,projects/*/*,freelance/*/*}`) — this dreaming pass
   covers only **this repo's own code and docs**, not the deployed
