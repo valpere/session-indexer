@@ -66,3 +66,7 @@ docs/superpowers/
 
 tmp/
 sbin/
+
+# dreaming run log (per machine) — reports/ itself IS tracked so the
+# [applied YYYY-MM-DD] annotation trail survives across machines
+.claude/dreaming/reports/.dreaming.log
