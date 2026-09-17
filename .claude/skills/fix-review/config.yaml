@@ -19,8 +19,12 @@ reviewers:
     # thinking phase on reasoning models. Saves 80-90% of completion
     # tokens at the cost of finding fewer issues — useful for the fast
     # diversity-only models on smaller diffs.
+    #
+    # 2026-09-17: deepseek-v4-flash:0731 (the resolved snapshot behind
+    # this plain tag) retires on Ollama Cloud 2026-09-25 (forced).
+    # Swapped to Ollama's named 1:1 replacement, deepseek-v4.1-flash.
     round_1:
-      model: deepseek-v4-flash:cloud      # DeepSeek thinking — primary deliberation
+      model: deepseek-v4.1-flash:cloud    # DeepSeek thinking — primary deliberation
       think: true
     round_2:
       model: glm-5.2:cloud                # Zhiyu AI thinking — SWE-Bench Pro SOTA, family diversity
