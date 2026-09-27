@@ -144,11 +144,17 @@ OPENCODE_MSG="Summarize the session transcript in the attached file. Use exactly
 Rules: 10-20 bullets total, Ukrainian for content, English for code/file names."
 
 try_opencode() {
+  # 2026-09-27: qwen3.5:cloud retired on Ollama Cloud 2026-09-25 (wave
+  # announced 2026-09-17 alongside glm-5.1/deepseek-v4-flash:0731, both
+  # already swapped elsewhere - this fallback list was missed). Canonical
+  # 1:1 replacement per common/dreaming/ollama-model-retirement-instructions.md:
+  # glm-5.3-flash or deepseek-v4.1-flash; picked the latter to avoid a
+  # second glm entry alongside glm-5.2 above.
   local models=(
     "ollama/glm-5.2:cloud"
     "ollama/kimi-k2.7-code:cloud"
     "ollama/minimax-m3:cloud"
-    "ollama/qwen3.5:cloud"
+    "ollama/deepseek-v4.1-flash:cloud"
   )
   command -v opencode &>/dev/null || return 1
   for model in "${models[@]}"; do
