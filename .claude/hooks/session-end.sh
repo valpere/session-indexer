@@ -3,7 +3,11 @@
 #
 # Behaviour:
 #   - Skip if /session-end skill wrote the file within the last 2 hours
-#   - Generate summary: agy (Gemini) → opencode (cloud) → raw excerpt
+#   - Generate summary: local Ollama API (1-2 s) → agy (Gemini) → opencode (cloud)
+#     → raw excerpt. The whole run keeps inside SESSION_END_BUDGET_S (default
+#     57 s, under the 60 s Stop-hook limit) so the log is ALWAYS written — a
+#     hook killed mid-chain never writes, the 2 h skip below never engages and
+#     the next reply re-runs the same doomed chain (seen: 25% of runs timed out)
 #   - If session-log.md already has an entry for today, replace it
 #   - Otherwise append; rotate to keep last 10 day-entries
 #
@@ -18,7 +22,7 @@ hook_setup_logging "session-end.sh"
 INPUT=$(cat)
 echo "[$(date -Iseconds)] session-end invoked" >> "$LOG_FILE"
 
-LOG="$(dirname "$0")/../session-log.md"
+LOG="${SESSION_LOG:-$(dirname "$0")/../session-log.md}"
 TODAY=$(date '+%Y-%m-%d')
 
 # Skip if /session-end skill already ran this session (file modified < 2h ago)
@@ -98,6 +102,33 @@ is_valid_summary() {
   [[ "$1" == "## $TODAY"* ]]
 }
 
+# Tier 1: straight to the local Ollama API (it forwards :cloud models). ~1-2 s
+# a call, where the agy/opencode CLIs need 15-45 s each (CLI + session start).
+# Two models in turn, each capped at 20 s. Model tags retire periodically —
+# audit this default with the fix-review model lists after any Ollama
+# retirement notice (see dreaming/ollama-model-retirement-instructions.md);
+# override per machine with SESSION_END_MODELS="tag1 tag2".
+try_ollama_api() {
+  local url="${OLLAMA_API_URL:-http://localhost:11434}"
+  local body result model
+  for model in ${SESSION_END_MODELS:-minimax-m3:cloud gpt-oss:120b-cloud}; do
+    (( $(remaining_budget) < 8 )) && return 1
+    echo "[$(date -Iseconds)] session-end: trying ollama api model: $model" >> "$LOG_FILE"
+    body=$(jq -n --arg m "$model" --arg p "$1" \
+      '{model:$m,stream:false,think:false,messages:[{role:"user",content:$p}]}') || return 1
+    result=$(curl -s -m 20 "$url/api/chat" -d "$body" 2>>"$LOG_FILE" | jq -r '.message.content // empty' 2>>"$LOG_FILE") || true
+    is_valid_summary "$result" && { echo "$result"; return 0; }
+    echo "[$(date -Iseconds)] session-end: ollama api model $model returned no usable summary" >> "$LOG_FILE"
+  done
+  return 1
+}
+
+# remaining_budget prints the seconds left of the hook budget, so a slow CLI
+# tier is cut off (and the raw-excerpt fallback still runs) instead of the
+# whole hook being killed before it writes anything. $SECONDS = time since
+# this script started.
+remaining_budget() { echo $(( ${SESSION_END_BUDGET_S:-57} - SECONDS )); }
+
 try_agy() {
   # Refreshed 2026-10-10 — the 3.5 series is retired (live "invalid model
   # selection" error; `agy models` starts at 3.6). Same list as canonical
@@ -111,12 +142,15 @@ try_agy() {
   )
   command -v agy &>/dev/null || return 1
   for model in "${models[@]}"; do
-    echo "[$(date -Iseconds)] session-end: trying agy model: $model" >> "$LOG_FILE"
+    local budget; budget=$(remaining_budget)
+    (( budget < 8 )) && return 1   # not enough budget left for another try
+    (( budget > 45 )) && budget=45
+    echo "[$(date -Iseconds)] session-end: trying agy model: $model (budget ${budget}s)" >> "$LOG_FILE"
     local result
     # Prompt as a positional arg, not stdin — `agy -p` reads the prompt
     # from its argument; piping via `<<<` leaves it unset and agy falls
     # back to a generic interactive-style greeting instead of erroring.
-    result=$(timeout 45 agy -p "$1" --model "$model" 2>>"$LOG_FILE") && \
+    result=$(timeout "$budget" agy -p "$1" --model "$model" 2>>"$LOG_FILE") && \
       is_valid_summary "$result" && { echo "$result"; return 0; }
     echo "[$(date -Iseconds)] session-end: agy model $model returned no usable summary" >> "$LOG_FILE"
   done
@@ -161,9 +195,12 @@ try_opencode() {
   )
   command -v opencode &>/dev/null || return 1
   for model in "${models[@]}"; do
-    echo "[$(date -Iseconds)] session-end: trying opencode model: $model" >> "$LOG_FILE"
+    local budget; budget=$(remaining_budget)
+    (( budget < 8 )) && return 1   # not enough budget left for another try
+    (( budget > 45 )) && budget=45
+    echo "[$(date -Iseconds)] session-end: trying opencode model: $model (budget ${budget}s)" >> "$LOG_FILE"
     local result
-    result=$(timeout 45 opencode run "$OPENCODE_MSG" \
+    result=$(timeout "$budget" opencode run "$OPENCODE_MSG" \
       --file "$EXCERPT_TMP" --model "$model" --format json 2>>"$LOG_FILE" | \
       jq -R -n -r '
         [inputs | select(length > 0) | (try fromjson catch empty)] |
@@ -180,7 +217,11 @@ try_opencode() {
 
 SUMMARY=""
 
-SUMMARY=$(try_agy "$PROMPT" 2>>"$LOG_FILE") || true
+SUMMARY=$(try_ollama_api "$PROMPT" 2>>"$LOG_FILE") || true
+
+if [[ -z "$SUMMARY" ]]; then
+  SUMMARY=$(try_agy "$PROMPT" 2>>"$LOG_FILE") || true
+fi
 
 if [[ -z "$SUMMARY" ]]; then
   SUMMARY=$(try_opencode 2>>"$LOG_FILE") || true
