@@ -26,7 +26,7 @@ go vet ./...                                              # or: make vet
 gofmt -l .                                                # should print nothing
 ```
 
-Requires Go 1.26.6+ (see `go.mod`) and, for embedding-related work, a local
+Requires Go 1.26.9+ (see `go.mod`) and, for embedding-related work, a local
 [Ollama](https://ollama.com/download) with `bge-m3:latest` pulled. Tests that
 don't touch `internal/embed` run without Ollama.
 

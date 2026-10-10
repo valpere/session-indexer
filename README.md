@@ -43,7 +43,7 @@ can break another.
 
 ## Prerequisites
 
-- **Go 1.26.6+** — to build the binary
+- **Go 1.26.9+** — to build the binary
 - **Ollama** — for vector embeddings (optional but recommended)
   - Install: [ollama.com/download](https://ollama.com/download) — native packages for macOS, Linux, Windows
   - `ollama pull bge-m3:latest` — 1024-dim multilingual model (EN + UA)
