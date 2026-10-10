@@ -204,7 +204,6 @@ Next steps: run /ship on each issue (constraint-fix issues first).
 
 - `/ship` — issue → implement → `/fix-review` → merge → close.
 - `/fix-review` — parallel multi-model review + Claude Arbiter (part of `/ship`).
-- `/curate-minions` — the sibling project-tooling skill, same manual-sync convention.
 - `/revival`, `/find-bugs`, `/improve` — complementary read-only checks.
 
 ## See also
