@@ -45,7 +45,7 @@ agent_agy() {
   # generic 'I am currently running on ...' greeting instead of answering
   # the prompt — verified 2026-07-30). `$(cat file)` strips any trailing
   # newline from the prompt; agy ignores that for prompt content.
-  agy -p "$(cat "$prompt_file")" --model "${model:-Gemini 3.5 Flash (Low)}" \
+  agy -p "$(cat "$prompt_file")" --model "${model:-Gemini 3.8 Flash (Low)}" \
     --mode plan --output-format json 2>/dev/null \
     | jq -r '.response // empty'
 }

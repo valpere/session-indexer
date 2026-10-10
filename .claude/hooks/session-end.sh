@@ -99,10 +99,13 @@ is_valid_summary() {
 }
 
 try_agy() {
+  # Refreshed 2026-10-10 — the 3.5 series is retired (live "invalid model
+  # selection" error; `agy models` starts at 3.6). Same list as canonical
+  # ~/wrk/common_claude/skills/session-end/hooks/session-end.sh.
   local models=(
-    "Gemini 3.5 Flash (Low)"
-    "Gemini 3.5 Flash (Medium)"
-    "Gemini 3.5 Flash (High)"
+    "Gemini 3.8 Flash (Low)"
+    "Gemini 3.8 Flash (Medium)"
+    "Gemini 3.8 Flash (High)"
     "Gemini 3.1 Pro (Low)"
     "Gemini 3.1 Pro (High)"
   )
