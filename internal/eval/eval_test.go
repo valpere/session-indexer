@@ -274,3 +274,54 @@ func TestEvaluateCosineAndBM25OverDirectDB(t *testing.T) {
 		}
 	}
 }
+
+func fixedRetriever(texts ...string) Retriever {
+	return func(string, int) ([]string, error) { return texts, nil }
+}
+
+func TestHybridRetrieverFusesByReciprocalRank(t *testing.T) {
+	// "b" is #2 in both lists, "a" is #1 in one only, "c" is #3 in one only:
+	// RRF puts the consensus item first.
+	h := HybridRetriever(fixedRetriever("a", "b", "c"), fixedRetriever("x", "b"), 10)
+	got, err := h("q", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "b,a,x" {
+		t.Fatalf("got %v, want [b a x]", got)
+	}
+}
+
+func TestHybridRetrieverRespectsKAndDepth(t *testing.T) {
+	var gotDepth int
+	rec := func(_ string, k int) ([]string, error) { gotDepth = k; return []string{"a", "b", "c"}, nil }
+	h := HybridRetriever(rec, fixedRetriever("a"), 50)
+	out, _ := h("q", 2)
+	if len(out) != 2 {
+		t.Fatalf("len = %d, want k=2", len(out))
+	}
+	if gotDepth != 50 {
+		t.Fatalf("component depth = %d, want 50 (fusion needs more than top-k from each side)", gotDepth)
+	}
+}
+
+func TestHybridRetrieverDeterministicTies(t *testing.T) {
+	// "a" (rank 1 of list 1) and "x" (rank 1 of list 2) tie; first list wins.
+	h := HybridRetriever(fixedRetriever("a"), fixedRetriever("x"), 10)
+	for i := 0; i < 20; i++ {
+		got, _ := h("q", 2)
+		if strings.Join(got, ",") != "a,x" {
+			t.Fatalf("run %d: got %v", i, got)
+		}
+	}
+}
+
+func TestHybridRetrieverPropagatesErrors(t *testing.T) {
+	bad := func(string, int) ([]string, error) { return nil, errors.New("boom") }
+	if _, err := HybridRetriever(bad, fixedRetriever("a"), 10)("q", 1); err == nil {
+		t.Fatal("component error must surface")
+	}
+	if _, err := HybridRetriever(fixedRetriever("a"), bad, 10)("q", 1); err == nil {
+		t.Fatal("component error must surface")
+	}
+}

@@ -55,7 +55,7 @@ Primary: embed query → exhaustive cosine over all `embeddings` rows loaded int
 
 ### Retrieval eval
 
-`internal/eval` + `cmd/session-indexer-eval` (separate binary, not a subcommand) measure Recall@{1,3,5,10} / MRR / latency / context size of `internal/search` on the public LoCoMo benchmark, deterministically (the dataset labels evidence turns; no LLM judge, no cloud calls). Modes: cosine, bm25 (FTS fallback), naive keyword baseline, and `*-mine` (through the real mine filters). Per-conversation stores in `tmp/eval/db/` double as the embedding cache; dataset stays in gitignored `tmp/eval/data/` (LoCoMo is CC BY-NC 4.0 — never commit or redistribute). Results and caveats: `docs/retrieval-eval.md`.
+`internal/eval` + `cmd/session-indexer-eval` (separate binary, not a subcommand) measure Recall@{1,3,5,10} / MRR / latency / context size of `internal/search` on the public LoCoMo benchmark, deterministically (the dataset labels evidence turns; no LLM judge, no cloud calls). Modes: cosine, bm25 (FTS fallback), naive keyword baseline, hybrid (RRF of cosine + BM25, harness-only), and `*-mine` (through the real mine filters). Per-conversation stores in `tmp/eval/db/` double as the embedding cache; dataset stays in gitignored `tmp/eval/data/` (LoCoMo is CC BY-NC 4.0 — never commit or redistribute). Results and caveats: `docs/retrieval-eval.md`.
 
 ### Browsing and Tree
 

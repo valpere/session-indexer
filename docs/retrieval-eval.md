@@ -39,6 +39,7 @@ question, so recall is deterministic.
 |---|---|---|---|---|---|---|---|
 | cosine | 0.064 | 0.136 | 0.182 | 0.262 | 0.116 | 28.3 ms | 118 tok |
 | cosine-mine | 0.064 | 0.136 | 0.182 | 0.262 | 0.116 | 27.9 ms | 120 tok |
+| hybrid (RRF k=60, depth 50) | 0.152 | 0.294 | 0.367 | 0.453 | 0.243 | 34.8 ms | 143 tok |
 | **bm25** | **0.262** | **0.427** | **0.484** | **0.563** | **0.359** | 1.0 ms | 155 tok |
 | naive keywords | 0.230 | 0.348 | 0.402 | 0.475 | 0.304 | 0.1 ms | 207 tok |
 
@@ -55,8 +56,7 @@ question, so recall is deterministic.
    chat utterances, while the lexically-specific evidence turn ranks lower.
 2. **Multi-hop "all evidence" recall is ≈0 for every mode** (single-turn
    retrieval cannot assemble several evidence turns at k≤10).
-3. **The `mine` noise filter costs almost nothing here** (`cosine` ≈
-   `cosine-mine`): dropping `<30`-char turns loses few evidence turns.
+. **Equal-weight hybrid does not beat BM25 on LoCoMo** (issue #88 step 1): RRF over cosine+BM25 lands between the two (R@1 0.152 vs BM25 0.262, MRR 0.243 vs 0.359) — the weak cosine ranking drags the fused list down. Untested: weighted fusion (e.g. BM25-heavy), a larger/smaller `depth`, other `k`. So on this benchmark the data supports "BM25 is the strong signal", not "fuse equally".
 
 ## Caveats — read before acting on the numbers
 
@@ -69,9 +69,7 @@ question, so recall is deterministic.
 
 ## What to review next (not done in this change)
 
-- `search` is cosine-first and uses FTS5 only as a fallback. On this data a
-  **hybrid** (BM25 + cosine rank fusion) would likely beat both; worth an issue
-  and an A/B in this harness (add a `hybrid` mode first, then decide).
+- `search` is cosine-first and uses FTS5 only as a fallback. `hybrid` mode now exists in the harness (equal-weight RRF) and did not beat BM25 here; try weighted fusion before drawing conclusions (issue #88).
 - Re-run on a sample of real session chunks (a private, local-only variant of
   this harness) before changing production defaults.
 - `distill --batch/--context-cap` and the distill model are **not** covered —

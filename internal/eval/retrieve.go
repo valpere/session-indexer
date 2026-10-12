@@ -265,3 +265,52 @@ func Evaluate(conv Conversation, idx map[string][]string, r Retriever, ks []int)
 	}
 	return out, nil
 }
+
+// rrfK is the Reciprocal Rank Fusion damping constant (60 is the value from the
+// original RRF paper and the de-facto default).
+const rrfK = 60
+
+// HybridRetriever fuses two retrievers with Reciprocal Rank Fusion:
+// score(text) = Σ 1/(rrfK + rank) over the lists it appears in. Each side is
+// asked for depth results (fusion needs more than the final top-k from each),
+// results are merged by text, and ties keep first-seen order (a's before b's)
+// so output is deterministic. This lives in the harness on purpose: it lets us
+// measure hybrid before touching internal/search.
+func HybridRetriever(a, b Retriever, depth int) Retriever {
+	return func(q string, k int) ([]string, error) {
+		la, err := a(q, depth)
+		if err != nil {
+			return nil, err
+		}
+		lb, err := b(q, depth)
+		if err != nil {
+			return nil, err
+		}
+		type entry struct {
+			text  string
+			score float64
+		}
+		idx := map[string]int{}
+		var all []entry
+		for _, list := range [][]string{la, lb} {
+			for i, t := range list {
+				j, ok := idx[t]
+				if !ok {
+					j = len(all)
+					idx[t] = j
+					all = append(all, entry{text: t})
+				}
+				all[j].score += 1 / float64(rrfK+i+1)
+			}
+		}
+		sort.SliceStable(all, func(x, y int) bool { return all[x].score > all[y].score })
+		if len(all) > k {
+			all = all[:k]
+		}
+		out := make([]string, len(all))
+		for i, e := range all {
+			out[i] = e.text
+		}
+		return out, nil
+	}
+}
