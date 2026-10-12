@@ -174,11 +174,22 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 	if err := validateRealModes(modes); err != nil {
 		return err
 	}
+	if nFacts <= 0 {
+		return fmt.Errorf("-facts must be > 0 (cosine scans every vector per query; sample a bounded set)")
+	}
 	if err := os.MkdirAll(cache, 0o755); err != nil {
 		return err
 	}
 	snap := filepath.Join(cache, "real.snapshot.db")
-	_ = os.Remove(snap)
+	removeSnapshot := func() {
+		for _, s := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(snap + s)
+		}
+	}
+	removeSnapshot()
+	// The snapshot is a full copy of private chunk text: delete it when done (this
+	// defer is registered before d.Close, so it runs after the handle is closed).
+	defer removeSnapshot()
 	if err := eval.Snapshot(realDB, snap); err != nil {
 		return err
 	}
@@ -197,16 +208,18 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 			return fmt.Errorf("mode %q needs Ollama with bge-m3", m)
 		}
 	}
-	models, err := db.EmbeddingModels(d)
-	if err != nil {
-		return err
-	}
-	tag, haveTag := embed.ModelTag(emb), false
-	for _, mc := range models {
-		haveTag = haveTag || mc.Model == tag
-	}
-	if !haveTag {
-		return fmt.Errorf("store has no embeddings for %s (it has %v); run `session-indexer embed` first", tag, models)
+	if needsEmbeddings(modes) {
+		models, err := db.EmbeddingModels(d)
+		if err != nil {
+			return err
+		}
+		tag, haveTag := embed.ModelTag(emb), false
+		for _, mc := range models {
+			haveTag = haveTag || mc.Model == tag
+		}
+		if !haveTag {
+			return fmt.Errorf("store has no embeddings for %s (it has %v); run `session-indexer embed` first", tag, models)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "real store: %d chunks, %d sampled fact-questions\n", len(conv.Turns), len(conv.QAs))
 
@@ -242,4 +255,15 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "report-real-"+rep.Date+".json"), b, 0o644)
+}
+
+// needsEmbeddings reports whether any mode searches by vector, i.e. whether the
+// store must hold embeddings for the current model (bm25/naive-only runs don't).
+func needsEmbeddings(modes []string) bool {
+	for _, m := range modes {
+		if m == "cosine" || m == "hybrid" {
+			return true
+		}
+	}
+	return false
 }

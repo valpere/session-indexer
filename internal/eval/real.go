@@ -3,6 +3,7 @@ package eval
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -13,7 +14,10 @@ import (
 // live store (which a Stop hook may be writing) is never modified and the
 // evaluation never races it. dst must not exist.
 func Snapshot(src, dst string) error {
-	d, err := sql.Open("sqlite", "file:"+src+"?mode=ro&_pragma=busy_timeout(5000)")
+	// url.URL escapes ?, # and % in the path; a hand-built "file:"+src would let
+	// them be read as URI syntax and silently drop mode=ro.
+	dsn := (&url.URL{Scheme: "file", Path: src, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}).String()
+	d, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}

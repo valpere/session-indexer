@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,5 +132,73 @@ func TestEvaluateOverRealStoreFindsSourceChunk(t *testing.T) {
 	s := Summarize(qs, []int{1, 3})
 	if s.N != 5 || s.RecallAny[1] != 1 {
 		t.Fatalf("summary = %+v (BM25 over unique topic tokens should be perfect)", s)
+	}
+}
+
+func TestSnapshotHandlesAwkwardPaths(t *testing.T) {
+	// '?' and '#' are URI metacharacters: an unescaped DSN would drop mode=ro or
+	// open a different file.
+	src := seedReal(t, 3)
+	dir := filepath.Join(t.TempDir(), "we?ird#dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	awk := filepath.Join(dir, "src?x#y.db")
+	// Copy the main file and any -wal/-shm sidecars (a WAL store keeps rows there).
+	for _, suf := range []string{"", "-wal", "-shm"} {
+		b, err := os.ReadFile(src + suf)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(awk+suf, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := filepath.Join(t.TempDir(), "snap'o.db") // db.Open (verification) can't take ?/# in a path, the source side can
+	if err := Snapshot(awk, dst); err != nil {
+		t.Fatalf("Snapshot with awkward paths: %v", err)
+	}
+	d, err := db.Open(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	var n int
+	d.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n)
+	if n != 3 {
+		t.Fatalf("chunks = %d, want 3", n)
+	}
+}
+
+func TestSnapshotSeesUncheckpointedWALWrites(t *testing.T) {
+	// A live writer keeps rows in the -wal file; the snapshot must include them.
+	src := filepath.Join(t.TempDir(), "live.db")
+	d, err := db.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close() // deliberately left open during Snapshot
+	for i := 0; i < 5; i++ {
+		if _, _, err := db.InsertChunk(d, internal.Chunk{SessionID: "s", SessionDate: "2026-10-01", Role: "user",
+			MessageIndex: i, Content: fmt.Sprintf("live chunk %d with enough text", i), CreatedAt: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := Snapshot(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	s, err := db.Open(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var n int
+	s.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n)
+	if n != 5 {
+		t.Fatalf("snapshot chunks = %d, want 5 (WAL contents must be included)", n)
 	}
 }

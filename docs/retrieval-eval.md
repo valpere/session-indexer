@@ -100,7 +100,7 @@ What it says, and what it does not:
 
 - Both BM25 and hybrid beat the current cosine-first default on this proxy
   (MRR 0.424 / 0.431 vs 0.342). The ordering matches LoCoMo.
-- **Hybrid vs BM25 is a tie within noise**: R@1 equal, +1–2 points at k≥3 on
+- **Hybrid vs BM25 is a tie within noise**: R@1 within 0.1 point (0.331 vs 0.332), +1–2 points at k≥3 on
   N=1000 (a single proportion near 0.5 has a ~±3 point 95% interval; paired
   significance was not computed). Hybrid costs ~10× the latency (it runs the
   full-scan cosine side) for no demonstrated gain.

@@ -28,3 +28,20 @@ func TestValidateRealModesRejectsMineModes(t *testing.T) {
 		t.Fatal("cosine-mine must be rejected for a real store")
 	}
 }
+
+func TestNeedsEmbeddings(t *testing.T) {
+	cases := []struct {
+		modes []string
+		want  bool
+	}{
+		{[]string{"bm25", "naive"}, false},
+		{[]string{"bm25", "cosine"}, true},
+		{[]string{"hybrid"}, true},
+		{[]string{"naive"}, false},
+	}
+	for _, c := range cases {
+		if got := needsEmbeddings(c.modes); got != c.want {
+			t.Errorf("needsEmbeddings(%v) = %v, want %v", c.modes, got, c.want)
+		}
+	}
+}
