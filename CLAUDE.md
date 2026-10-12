@@ -4,22 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-```bash
-# Build, install, test, lint, format via Makefile
-make build         # build to bin/session-indexer
-make install       # go install (puts binary on PATH)
-make test          # go test ./...
-make test-race     # go test -race ./...
-make test-pkg PKG=./internal/mine  # test one package (add /... for subpackages)
-make vet           # go vet ./...
-make fmt           # gofmt -w . (mutating)
-make clean         # remove bin/session-indexer
-```
-
-Raw `go` invocations still work if you don't want to use make:
-`go build -o bin/session-indexer ./cmd/session-indexer`,
-`go install ./cmd/session-indexer`, `go test ./...`, `go test -race ./...`,
-`go test ./internal/mine/...`, `go vet ./...`, `gofmt -w .`.
+Build/test/lint/format via the Makefile (`make build|install|test|test-race|test-pkg PKG=...|vet|fmt|clean`); see `Makefile`.
 
 ## Architecture
 
@@ -42,29 +27,7 @@ session-indexer tree    <jsonl-path> [--json]           # agent/subagent/tool-ca
 
 ### File Layout
 
-```
-cmd/session-indexer/main.go       — Cobra root + subcommands
-internal/types.go                 — shared row types: Chunk, SearchResult, Fact
-internal/db/
-  db.go                           — open, WAL, busy_timeout, schema version check; fact CRUD
-  schema.sql                      — embedded via go:embed
-internal/mine/
-  mine.go                         — orchestrate: parse → chunk → store → embed (two-phase: store first, embed respects ctx deadline; deferred chunks backfilled via `embed`). Defines `mine.Result` (ChunksInserted / Embedded / Skipped / Deferred).
-  parse.go                        — JSONL → []Message
-  chunk.go                        — []Message → []Chunk (split, filter, truncate; rune-safe hard-split for Cyrillic)
-internal/embed/
-  embed.go                        — Ollama client, probe+model-check, float32 BLOB
-internal/search/
-  search.go                       — exhaustive cosine; FTS5 BM25 fallback; Stats
-internal/distill/
-  distill.go                      — Ollama generate client + orchestration: confidence gate (deterministic Go check, not LLM-enforced), automatic supersession with a validated-against-context safeguard
-internal/facts/
-  facts.go                        — read verbs: Search (FTS5 BM25), List (no query, browse), Get (supersedes edges), Related (depth-1), BySourceChunk (provenance for `show`)
-internal/browse/
-  browse.go                       — read-only enumeration without a query: ListChunks, GetChunk, Days, Sessions — backs `list`/`show`/`sessions`
-internal/tree/
-  types.go / parse.go / discover.go / build.go / render.go — structural transcript view (see Tree)
-```
+One package per concern under `internal/` (`db`, `mine`, `embed`, `search`, `distill`, `facts`, `browse`, `tree`); `cmd/session-indexer/main.go` is the Cobra root. Shared row types live in `internal/types.go`; see `docs/architecture.md` for the per-file layout.
 
 ### Storage
 
@@ -90,33 +53,9 @@ Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims)
 
 Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Scale assumption: <10k chunks. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
 
-### Browsing
+### Browsing and Tree
 
-`internal/browse` provides read-only enumeration without a query — `sessions`,
-`list`, `show` — deliberately separate from `internal/search`, whose package
-doc scopes it to *ranked* retrieval. `show <chunk-id>` composes
-`browse.GetChunk` with `facts.BySourceChunk` to close the provenance loop from
-a fact (`facts get <id>` reports `source_chunk_id`) back to the actual chunk
-text it was distilled from — the highest-value part of this layer, since
-`stats` only gives aggregates and `search`/`facts search` both require a
-query term.
-
-`sessions` defaults to grouping by `session_date`, not `session_id`:
-`--resume` keeps a single `sessionId` alive for months, so `session_id` in
-practice produces a few huge buckets and many single-chunk ones, while
-`session_date` gives evenly-sized buckets that match how people recall work.
-`--by-session` gives the raw `session_id` rollup when that skew itself is
-what you want to see.
-
-No index exists on `session_date` — measured on a live 26k-chunk/150MB store,
-`ORDER BY session_date DESC LIMIT N` full-scans in single-digit milliseconds,
-and adding an index would force another schema bump (and the re-mine that
-comes with it) for no measurable gain. Revisit only if a future schema bump
-happens anyway.
-
-### Tree
-
-`tree` is a read-only structural view of one JSONL transcript, deliberately separate from `internal/mine` (which flattens to text chunks and discards structure). It reads the file directly — no DB. Spawn tool calls (`Agent`/`Task`/`Workflow`) join to subagent files `<dir>/<session-uuid>/subagents/agent-<id>.jsonl` via the sidecar `agent-<id>.meta.json` field `toolUseId` (== the spawning `tool_use` block id); workflow agents live under `subagents/workflows/<run-id>/` and nest under a group node joined by the `runId` in the launch `toolUseResult`. Unmatched subagents attach to the root rather than being dropped. Tokens are `output_tokens` counted once per `requestId` (one turn spans several lines repeating cumulative usage). Status is `done` or `in-progress` (any tool call without a result). Format knowledge is ported from zoetrope's `transcript.rs`; agent/tool counts were cross-checked against `zoetrope inspect` on the 40 largest local sessions (all equal). Malformed lines are skipped, never fatal.
+`sessions`/`list`/`show` (`internal/browse`) are query-free reads, kept out of `internal/search` (ranked retrieval only); `sessions` groups by `session_date`, not `session_id`; no `session_date` index (measured, not needed). `tree <jsonl-path>` (`internal/tree`) is a read-only structural view of one transcript, separate from `internal/mine`'s flattening parser; it reads no DB. Design and join rules: `docs/architecture.md` ("Browsing", "Tree").
 
 ### Facts Layer
 
