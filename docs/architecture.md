@@ -479,7 +479,7 @@ pull the distill model (OLLAMA_DISTILL_MODEL)`, matching NFR-1.
 
 ## Tree
 
-`session-indexer tree <jsonl-path> [--json]` parses a transcript structurally (`internal/tree`, separate from `internal/mine`'s flattening parser) and prints the main agent, its subagents and tool-call tallies. Subagent files are found at `<dir>/<session-uuid>/subagents/agent-<id>.jsonl`; each `.meta.json` sidecar's `toolUseId` equals the spawning `tool_use` block id (`Agent`/`Task`/`Workflow`), which is the join key. Workflow agents (`subagents/workflows/<run-id>/`) nest under a group node joined via the `runId` of the launch result. Orphan subagents attach to the root. Tokens = `output_tokens` once per `requestId`. Reads only the given file and its sibling `subagents/` tree; stores nothing.
+`session-indexer tree <jsonl-path> [--json]` parses a transcript structurally (`internal/tree`, separate from `internal/mine`'s flattening parser) and prints the main agent, its subagents and tool-call tallies. Subagent files are found at `<dir>/<session-uuid>/subagents/agent-<id>.jsonl`; each `.meta.json` sidecar's `toolUseId` equals the spawning `tool_use` block id (`Agent`/`Task`/`Workflow`), which is the join key. Workflow agents (`subagents/workflows/<run-id>/`) nest under a group node joined via the `runId` of the launch result. Orphan subagents attach to the root. Tokens = `output_tokens` once per `requestId`. Malformed or unreadable lines are skipped, never fatal. Reads only the given file and its sibling `subagents/` tree; stores nothing.
 
 ---
 

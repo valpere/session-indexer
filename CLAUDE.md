@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Build/test/lint/format via the Makefile (`make build|install|test|test-race|test-pkg PKG=...|vet|fmt|clean`); see `Makefile`.
+Build/test/lint/format via the Makefile (`make build|install|test|test-race|test-pkg PKG=...|vet|fmt|clean`); see `Makefile`. `make fmt` is mutating (`gofmt -w .`).
 
 ## Architecture
 
