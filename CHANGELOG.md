@@ -13,6 +13,7 @@ full per-PR history.
 ## [Unreleased]
 
 ### Added
+- `session-indexer-eval --real-db <store> --facts N`: evaluate retrieval on a real session store (distilled facts as queries, their source chunks as evidence); snapshots the store via `VACUUM INTO` read-only, prints aggregates only. First result: hybrid ≈ BM25 > cosine (see docs/retrieval-eval.md).
 - `session-indexer-eval --modes hybrid`: harness-only Reciprocal Rank Fusion of cosine + BM25 (production `search` unchanged). First result on LoCoMo: equal-weight RRF lands between cosine and BM25, not above BM25 (see docs/retrieval-eval.md).
 - `make eval` / `cmd/session-indexer-eval`: retrieval-only quality harness (Recall@k, MRR, latency, context size) over the public LoCoMo benchmark — cosine vs BM25 fallback vs naive baseline, direct-insert vs through-`mine`. No LLM judge, no cloud calls, no schema change. New package `internal/eval`.
 - `tree <jsonl-path>` (`--json`): read-only view of a transcript's agent →

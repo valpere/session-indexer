@@ -76,3 +76,47 @@ question, so recall is deterministic.
   this harness) before changing production defaults.
 - `distill --batch/--context-cap` and the distill model are **not** covered —
   this harness measures retrieval only.
+
+## Real session store (private, #88 step 2)
+
+`session-indexer-eval --real-db .claude/sessions.db --facts 1000` evaluates a
+real store. The store is first copied with `VACUUM INTO` through a read-only
+connection (the live DB is never written), **facts are the questions** (query =
+`subject predicate object`) and each fact's **source chunk is the evidence**.
+One fact per source chunk, sampled at an even stride (deterministic). Only
+aggregate metrics are printed or written (`tmp/eval/report-real-<date>.json`);
+no chunk or fact text leaves the machine.
+
+First run (2026-10-12, this repo's own store: 38,317 chunks, bge-m3, 1000 sampled facts):
+
+| mode | R@1 | R@3 | R@5 | R@10 | MRR | latency | top-5 ctx |
+|---|---|---|---|---|---|---|---|
+| cosine (current default) | 0.256 | 0.393 | 0.462 | 0.522 | 0.342 | 208 ms | 515 tok |
+| bm25 | 0.332 | 0.494 | 0.546 | 0.626 | 0.424 | 21 ms | 811 tok |
+| naive keywords | 0.208 | 0.355 | 0.422 | 0.496 | 0.298 | 14 ms | 1472 tok |
+| hybrid (RRF) | 0.331 | 0.501 | 0.565 | 0.640 | 0.431 | 230 ms | 694 tok |
+
+What it says, and what it does not:
+
+- Both BM25 and hybrid beat the current cosine-first default on this proxy
+  (MRR 0.424 / 0.431 vs 0.342). The ordering matches LoCoMo.
+- **Hybrid vs BM25 is a tie within noise**: R@1 equal, +1–2 points at k≥3 on
+  N=1000 (a single proportion near 0.5 has a ~±3 point 95% interval; paired
+  significance was not computed). Hybrid costs ~10× the latency (it runs the
+  full-scan cosine side) for no demonstrated gain.
+- **The proxy favours lexical methods.** The query is an LLM paraphrase of the
+  chunk it points back to, so it shares vocabulary with its evidence by
+  construction. It does not model the use case cosine exists for — a human
+  half-remembering an idea in different words. Real recall for such queries is
+  **not measured here**, and `search`'s output for them is the thing users see.
+- Facts are only an incomplete label: a fact may be supported by several
+  near-duplicate chunks, and only its source chunk counts as a hit (strict,
+  slightly pessimistic); results are mapped back to chunks by content, so
+  identical texts share ids (slightly optimistic). The store is also this
+  repo's own sessions only — one project, mixed UA/EN.
+
+**Conclusion for #88 step 3 (changing `search` defaults): not justified by this
+data alone.** The measured gap is real but the query model is biased toward
+BM25, and hybrid does not beat BM25 here. A defensible next step needs labelled
+queries that are *not* derived from their evidence (e.g. human-written
+recall queries with a known target) — until then, leave `search` as is.

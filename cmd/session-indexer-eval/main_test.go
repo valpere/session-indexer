@@ -18,3 +18,13 @@ func TestValidateModesAcceptsHybrid(t *testing.T) {
 		t.Fatalf("hybrid modes rejected: %v", err)
 	}
 }
+
+func TestValidateRealModesRejectsMineModes(t *testing.T) {
+	if err := validateRealModes([]string{"cosine", "bm25", "naive", "hybrid"}); err != nil {
+		t.Fatalf("real modes rejected: %v", err)
+	}
+	// "-mine" modes re-ingest a dataset through the parser; a real store is already mined.
+	if err := validateRealModes([]string{"cosine-mine"}); err == nil {
+		t.Fatal("cosine-mine must be rejected for a real store")
+	}
+}
