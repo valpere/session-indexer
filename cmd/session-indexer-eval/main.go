@@ -13,20 +13,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/valpere/session-indexer/internal/db"
 	"github.com/valpere/session-indexer/internal/embed"
 	"github.com/valpere/session-indexer/internal/eval"
 )
 
 func main() {
 	var (
-		data  = flag.String("data", "tmp/eval/data/locomo10.json", "path to locomo10.json (CC BY-NC 4.0 — keep local, never commit)")
-		cache = flag.String("cache", "tmp/eval/db", "directory for per-conversation SQLite stores (doubles as the embedding cache)")
-		out   = flag.String("out", "tmp/eval", "directory for the JSON report")
-		modes = flag.String("modes", "cosine,bm25,naive,hybrid,cosine-mine", "comma-separated: cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine")
-		limit = flag.Int("convs", 0, "evaluate only the first N conversations (0 = all)")
+		data   = flag.String("data", "tmp/eval/data/locomo10.json", "path to locomo10.json (CC BY-NC 4.0 — keep local, never commit)")
+		cache  = flag.String("cache", "tmp/eval/db", "directory for per-conversation SQLite stores (doubles as the embedding cache)")
+		out    = flag.String("out", "tmp/eval", "directory for the JSON report")
+		modes  = flag.String("modes", "", "comma-separated (default: all non-mine modes for -real-db, plus cosine-mine for LoCoMo): cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine")
+		limit  = flag.Int("convs", 0, "evaluate only the first N conversations (0 = all)")
+		realDB = flag.String("real-db", "", "evaluate a real session store instead of LoCoMo: facts are the questions, their source chunks the evidence (private data: snapshotted under -cache, only aggregates are printed)")
+		facts  = flag.Int("facts", 300, "with -real-db: how many facts to sample (cosine scans every vector per query, so keep this modest)")
 	)
 	flag.Parse()
-	if err := run(*data, *cache, *out, strings.Split(*modes, ","), *limit); err != nil {
+	if *modes == "" {
+		*modes = "cosine,bm25,naive,hybrid"
+		if *realDB == "" {
+			*modes += ",cosine-mine"
+		}
+	}
+	var err error
+	if *realDB != "" {
+		err = runReal(*realDB, *cache, *out, strings.Split(*modes, ","), *facts)
+	} else {
+		err = run(*data, *cache, *out, strings.Split(*modes, ","), *limit)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -136,4 +151,119 @@ func buildEmbedder(wanted embed.Embedder, real *embed.Client) embed.Embedder {
 		return real
 	}
 	return wanted
+}
+
+// validateRealModes allows only the modes that make sense on an already-mined
+// store: the "-mine" variants re-ingest a dataset through the parser.
+func validateRealModes(modes []string) error {
+	for _, m := range modes {
+		switch m {
+		case "cosine", "bm25", "naive", "hybrid":
+		default:
+			return fmt.Errorf("mode %q is not valid with -real-db (want cosine, bm25, naive, hybrid)", m)
+		}
+	}
+	return nil
+}
+
+// runReal evaluates a real session store. The store is first snapshotted (the
+// live file is never opened for writing), then facts become queries and their
+// source chunks the evidence. Output is aggregate metrics only — never chunk
+// or fact text — so the numbers are safe to quote while the data stays private.
+func runReal(realDB, cache, out string, modes []string, nFacts int) error {
+	if err := validateRealModes(modes); err != nil {
+		return err
+	}
+	if nFacts <= 0 {
+		return fmt.Errorf("-facts must be > 0 (cosine scans every vector per query; sample a bounded set)")
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return err
+	}
+	snap := filepath.Join(cache, "real.snapshot.db")
+	removeSnapshot := func() {
+		for _, s := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(snap + s)
+		}
+	}
+	removeSnapshot()
+	// The snapshot is a full copy of private chunk text: delete it when done (this
+	// defer is registered before d.Close, so it runs after the handle is closed).
+	defer removeSnapshot()
+	if err := eval.Snapshot(realDB, snap); err != nil {
+		return err
+	}
+	d, err := db.Open(snap)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	conv, err := eval.FromStore(d, nFacts)
+	if err != nil {
+		return err
+	}
+	emb := embed.NewClient()
+	for _, m := range modes {
+		if (m == "cosine" || m == "hybrid") && !emb.Available() {
+			return fmt.Errorf("mode %q needs Ollama with bge-m3", m)
+		}
+	}
+	if needsEmbeddings(modes) {
+		models, err := db.EmbeddingModels(d)
+		if err != nil {
+			return err
+		}
+		tag, haveTag := embed.ModelTag(emb), false
+		for _, mc := range models {
+			haveTag = haveTag || mc.Model == tag
+		}
+		if !haveTag {
+			return fmt.Errorf("store has no embeddings for %s (it has %v); run `session-indexer embed` first", tag, models)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "real store: %d chunks, %d sampled fact-questions\n", len(conv.Turns), len(conv.QAs))
+
+	ks := []int{1, 3, 5, 10}
+	idx := eval.ContentIndex(conv.Turns)
+	rep := eval.Report{Dataset: fmt.Sprintf("real session store (private; %d chunks, %d fact-queries)", len(conv.Turns), len(conv.QAs)),
+		Date: time.Now().Format("2006-01-02"), Ks: ks}
+	for _, m := range modes {
+		var r eval.Retriever
+		switch m {
+		case "cosine":
+			r = eval.DBRetriever(d, emb)
+		case "bm25":
+			r = eval.DBRetriever(d, eval.NoEmbedder{})
+		case "naive":
+			r = eval.NaiveRetriever(conv.Turns)
+		case "hybrid":
+			r = eval.HybridRetriever(eval.DBRetriever(d, emb), eval.DBRetriever(d, eval.NoEmbedder{}), hybridDepth)
+		}
+		fmt.Fprintf(os.Stderr, "[%s] evaluating\n", m)
+		qs, err := eval.Evaluate(conv, idx, r, ks)
+		if err != nil {
+			return err
+		}
+		rep.Modes = append(rep.Modes, eval.ModeReport{Mode: m, Overall: eval.Summarize(qs, ks), PerCategory: map[int]eval.Summary{}})
+	}
+	fmt.Print(eval.RenderMarkdown(rep))
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(rep, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(out, "report-real-"+rep.Date+".json"), b, 0o644)
+}
+
+// needsEmbeddings reports whether any mode searches by vector, i.e. whether the
+// store must hold embeddings for the current model (bm25/naive-only runs don't).
+func needsEmbeddings(modes []string) bool {
+	for _, m := range modes {
+		if m == "cosine" || m == "hybrid" {
+			return true
+		}
+	}
+	return false
 }
