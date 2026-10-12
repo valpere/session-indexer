@@ -1,6 +1,6 @@
 ---
 name: fix-review
-description: Multi-model PR review with parallel fan-out. Three Ollama models (Cloud `:cloud` by default, local fallback) review the full PR diff in parallel; Claude acts as Arbiter, using vote count as a confidence prior to confirm/escalate/dismiss findings, then applies a single consolidated fix commit. Auto-merges (squash) when no fixes were reverted and the PR is mergeable; otherwise leaves it for manual review. Usage: /fix-review [PR-number]
+description: "Multi-model PR review with parallel fan-out. Three Ollama models (Cloud `:cloud` by default, local fallback) review the full PR diff in parallel; Claude acts as Arbiter, using vote count as a confidence prior to confirm/escalate/dismiss findings, then applies a single consolidated fix commit. Auto-merges (squash) when no fixes were reverted and the PR is mergeable; otherwise leaves it for manual review. Usage: /fix-review [PR-number]"
 ---
 
 # Skill: /fix-review (parallel)
