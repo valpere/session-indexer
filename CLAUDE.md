@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Build/test/lint/format via the Makefile (`make build|install|test|test-race|test-pkg PKG=...|vet|fmt|clean`); see `Makefile`. `make fmt` is mutating (`gofmt -w .`).
+Build/test/lint/format via the Makefile (`make build|install|test|test-race|test-pkg PKG=...|vet|fmt|clean`); see `Makefile`. `make fmt` is mutating (`gofmt -w .`). `make eval` runs the retrieval-quality harness (needs live Ollama + bge-m3 and the LoCoMo file; deliberately not part of `make test`).
 
 ## Architecture
 
@@ -52,6 +52,10 @@ Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims)
 ### Search
 
 Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Scale assumption: <10k chunks. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
+
+### Retrieval eval
+
+`internal/eval` + `cmd/session-indexer-eval` (separate binary, not a subcommand) measure Recall@{1,3,5,10} / MRR / latency / context size of `internal/search` on the public LoCoMo benchmark, deterministically (the dataset labels evidence turns; no LLM judge, no cloud calls). Modes: cosine, bm25 (FTS fallback), naive keyword baseline, and `*-mine` (through the real mine filters). Per-conversation stores in `tmp/eval/db/` double as the embedding cache; dataset stays in gitignored `tmp/eval/data/` (LoCoMo is CC BY-NC 4.0 — never commit or redistribute). Results and caveats: `docs/retrieval-eval.md`.
 
 ### Browsing and Tree
 
