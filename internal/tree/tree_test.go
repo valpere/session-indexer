@@ -270,3 +270,52 @@ func TestRenderIndentedTree(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildOrphanOrderIsDeterministic(t *testing.T) {
+	// Subagents whose meta names a spawn that doesn't exist all land on the
+	// root; their order must be stable (agent-id order), not map-iteration.
+	dir := t.TempDir()
+	p := filepath.Join(dir, sid+".jsonl")
+	writeFile(t, p, assistant("a1", `null`, "r", "m", 1, `{"type":"text","text":"x"}`))
+	sub := filepath.Join(dir, sid, "subagents")
+	for _, id := range []string{"a1", "b2", "c3", "d4", "e5", "f6"} {
+		writeFile(t, filepath.Join(sub, "agent-"+id+".jsonl"), `{"type":"assistant","agentId":"`+id+`","uuid":"u","requestId":"q","message":{"content":[]}}`)
+		writeFile(t, filepath.Join(sub, "agent-"+id+".meta.json"), `{"toolUseId":"missing-`+id+`"}`)
+	}
+	for i := 0; i < 20; i++ {
+		s, err := Build(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range s.Root.Children {
+			got = append(got, c.AgentID)
+		}
+		if strings.Join(got, ",") != "a1,b2,c3,d4,e5,f6" {
+			t.Fatalf("run %d: order = %v", i, got)
+		}
+	}
+}
+
+func TestBuildMissingFileIsError(t *testing.T) {
+	if _, err := Build(filepath.Join(t.TempDir(), sid+".jsonl")); err == nil {
+		t.Fatal("expected error for missing transcript")
+	}
+}
+
+func TestBuildWorkflowGroupInheritsInProgress(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, sid+".jsonl")
+	writeFile(t, p, assistant("a1", `null`, "r", "m", 1, `{"type":"text","text":"x"}`))
+	wf := filepath.Join(dir, sid, "subagents", "workflows", "wf_9")
+	writeFile(t, filepath.Join(wf, "agent-w1.jsonl"),
+		`{"type":"assistant","agentId":"w1","uuid":"u","requestId":"q","message":{"content":[`+toolUseBlock("t", "Bash", `{}`)+`]}}`)
+	s, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := s.Root.Children[0]
+	if !g.Group || g.Status != StatusInProgress {
+		t.Fatalf("group = %+v, want in-progress (child has a pending tool)", g)
+	}
+}

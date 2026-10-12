@@ -103,7 +103,7 @@ func Build(sessionPath string) (*Session, error) {
 
 	owners := map[*Node]*agentData{s.Root: main} // node -> its parsed data
 	byTool := map[string][]*Node{}               // spawning tool_use id -> children
-	var orphans []*Node
+	var all []*Node                              // every joinable node in discovery order, for a deterministic orphan sweep
 	runToTool := map[string]string{}
 	runNames := map[string]string{}
 	collect := func(d *agentData) {
@@ -137,10 +137,9 @@ func Build(sessionPath string) (*Session, error) {
 			if !join {
 				continue
 			}
+			all = append(all, n)
 			if f.ToolUseID != "" {
 				byTool[f.ToolUseID] = append(byTool[f.ToolUseID], n)
-			} else {
-				orphans = append(orphans, n)
 			}
 		}
 		return nodes
@@ -163,10 +162,14 @@ func Build(sessionPath string) (*Session, error) {
 		if name := runNames[g.id]; name != "" {
 			g.node.Label = name
 		}
+		for _, c := range g.node.Children {
+			if c.Status == StatusInProgress {
+				g.node.Status = StatusInProgress
+			}
+		}
+		all = append(all, g.node)
 		if tool, ok := runToTool[g.id]; ok {
 			byTool[tool] = append(byTool[tool], g.node)
-		} else {
-			orphans = append(orphans, g.node)
 		}
 	}
 
@@ -175,6 +178,11 @@ func Build(sessionPath string) (*Session, error) {
 	attached := map[*Node]bool{}
 	var attach func(n *Node)
 	attach = func(n *Node) {
+		if n.Group {
+			for _, c := range n.Children {
+				attach(c)
+			}
+		}
 		d := owners[n]
 		if d == nil {
 			return
@@ -191,14 +199,9 @@ func Build(sessionPath string) (*Session, error) {
 		}
 	}
 	attach(s.Root)
-	for _, ns := range byTool {
-		for _, c := range ns {
-			if !attached[c] {
-				orphans = append(orphans, c)
-			}
-		}
-	}
-	for _, o := range orphans {
+	// Anything not reached via a spawn call attaches to the root, in discovery
+	// order (never map order), so output is stable run to run.
+	for _, o := range all {
 		if attached[o] {
 			continue
 		}
