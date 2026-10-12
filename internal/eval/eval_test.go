@@ -325,3 +325,35 @@ func TestHybridRetrieverPropagatesErrors(t *testing.T) {
 		t.Fatal("component error must surface")
 	}
 }
+
+func TestHybridRetrieverCountsATextOncePerList(t *testing.T) {
+	// "a" appears twice in list 1 (duplicate utterance), "b" is in both lists.
+	// Canonical RRF counts "a" once at its best rank (1/61), so the consensus
+	// item "b" (ranks 3 and 1: 1/63+1/61) must beat it; double-counting "a"
+	// (1/61+1/62) would wrongly put it first.
+	h := HybridRetriever(fixedRetriever("a", "a", "b"), fixedRetriever("b"), 10)
+	got, _ := h("q", 3)
+	if strings.Join(got, ",") != "b,a" {
+		t.Fatalf("got %v, want [b a]", got)
+	}
+}
+
+func TestHybridRetrieverClampsDepthToK(t *testing.T) {
+	var asked int
+	rec := func(_ string, k int) ([]string, error) { asked = k; return nil, nil }
+	HybridRetriever(rec, fixedRetriever(), 3)("q", 10)
+	if asked != 10 {
+		t.Fatalf("component asked for %d results, want 10 (depth must not be below k)", asked)
+	}
+}
+
+func TestHybridRetrieverEmptyComponents(t *testing.T) {
+	got, err := HybridRetriever(fixedRetriever(), fixedRetriever("x"), 10)("q", 5)
+	if err != nil || len(got) != 1 || got[0] != "x" {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	got, err = HybridRetriever(fixedRetriever(), fixedRetriever(), 10)("q", 5)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}

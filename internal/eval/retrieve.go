@@ -278,6 +278,7 @@ const rrfK = 60
 // measure hybrid before touching internal/search.
 func HybridRetriever(a, b Retriever, depth int) Retriever {
 	return func(q string, k int) ([]string, error) {
+		depth := max(depth, k) // a shallower component would silently shorten the fused list
 		la, err := a(q, depth)
 		if err != nil {
 			return nil, err
@@ -293,7 +294,12 @@ func HybridRetriever(a, b Retriever, depth int) Retriever {
 		idx := map[string]int{}
 		var all []entry
 		for _, list := range [][]string{la, lb} {
+			seen := map[string]bool{} // a text counts once per list, at its best rank
 			for i, t := range list {
+				if seen[t] {
+					continue
+				}
+				seen[t] = true
 				j, ok := idx[t]
 				if !ok {
 					j = len(all)
