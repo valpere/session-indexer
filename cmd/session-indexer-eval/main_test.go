@@ -12,3 +12,9 @@ func TestValidateModes(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateModesAcceptsHybrid(t *testing.T) {
+	if err := validateModes([]string{"hybrid", "hybrid-mine"}); err != nil {
+		t.Fatalf("hybrid modes rejected: %v", err)
+	}
+}

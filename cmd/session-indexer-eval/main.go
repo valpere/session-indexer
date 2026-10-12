@@ -22,7 +22,7 @@ func main() {
 		data  = flag.String("data", "tmp/eval/data/locomo10.json", "path to locomo10.json (CC BY-NC 4.0 — keep local, never commit)")
 		cache = flag.String("cache", "tmp/eval/db", "directory for per-conversation SQLite stores (doubles as the embedding cache)")
 		out   = flag.String("out", "tmp/eval", "directory for the JSON report")
-		modes = flag.String("modes", "cosine,bm25,naive,cosine-mine", "comma-separated: cosine, bm25, naive, cosine-mine, bm25-mine")
+		modes = flag.String("modes", "cosine,bm25,naive,hybrid,cosine-mine", "comma-separated: cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine")
 		limit = flag.Int("convs", 0, "evaluate only the first N conversations (0 = all)")
 	)
 	flag.Parse()
@@ -50,7 +50,7 @@ func run(data, cache, out string, modes []string, limit int) error {
 		rep.NoEvidence += c.NoEvidence
 	}
 	for _, mode := range modes {
-		needsCosine := strings.HasPrefix(mode, "cosine")
+		needsCosine := strings.HasPrefix(mode, "cosine") || strings.HasPrefix(mode, "hybrid")
 		if needsCosine && !emb.Available() {
 			return fmt.Errorf("mode %q needs Ollama with %s: start it, or drop the mode", mode, "bge-m3")
 		}
@@ -89,9 +89,9 @@ func run(data, cache, out string, modes []string, limit int) error {
 func validateModes(modes []string) error {
 	for _, m := range modes {
 		switch m {
-		case "cosine", "bm25", "naive", "cosine-mine", "bm25-mine":
+		case "cosine", "bm25", "naive", "hybrid", "cosine-mine", "bm25-mine", "hybrid-mine":
 		default:
-			return fmt.Errorf("unknown mode %q (want cosine, bm25, naive, cosine-mine, bm25-mine)", m)
+			return fmt.Errorf("unknown mode %q (want cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine)", m)
 		}
 	}
 	return nil
@@ -118,8 +118,16 @@ func evalOne(mode string, c eval.Conversation, cache string, emb *embed.Client, 
 		return nil, err
 	}
 	defer d.Close()
-	return eval.Evaluate(c, idx, eval.DBRetriever(d, embedder), ks)
+	var r eval.Retriever = eval.DBRetriever(d, embedder)
+	if strings.HasPrefix(mode, "hybrid") {
+		// Same store, two paths: cosine via the real embedder, BM25 via the FTS fallback.
+		r = eval.HybridRetriever(eval.DBRetriever(d, emb), eval.DBRetriever(d, eval.NoEmbedder{}), hybridDepth)
+	}
+	return eval.Evaluate(c, idx, r, ks)
 }
+
+// hybridDepth is how many results each side contributes to rank fusion.
+const hybridDepth = 50
 
 // buildEmbedder returns the embedder used to populate a store: the real one
 // whenever Ollama is up, so a BM25 run never leaves a store half-embedded.
