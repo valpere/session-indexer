@@ -193,8 +193,8 @@ func smallConv() Conversation {
 
 func TestDirectDBKeepsShortTurnsAndCachesEmbeddings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.db")
-	emb := fakeEmb{}
-	d, err := BuildDirectDB(path, smallConv(), emb)
+	c := &countingEmb{}
+	d, err := BuildDirectDB(path, smallConv(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,12 +205,35 @@ func TestDirectDBKeepsShortTurnsAndCachesEmbeddings(t *testing.T) {
 	if n != 3 || ne != 3 {
 		t.Fatalf("chunks=%d embeddings=%d, want 3/3 (direct mode must keep the short turn)", n, ne)
 	}
-	// Rebuild with an embedder that fails: cached vectors must be reused.
-	d2, err := BuildDirectDB(path, smallConv(), fakeEmb{down: true})
+	if c.calls != 3 {
+		t.Fatalf("first build embedded %d chunks, want 3", c.calls)
+	}
+	// Rebuild with the SAME embedder (same model tag): the persisted store is the
+	// embedding cache, so nothing may be re-embedded or duplicated.
+	c.calls = 0
+	d2, err := BuildDirectDB(path, smallConv(), c)
 	if err != nil {
 		t.Fatalf("rebuild with cache: %v", err)
 	}
-	d2.Close()
+	defer d2.Close()
+	if c.calls != 0 {
+		t.Fatalf("rebuild re-embedded %d chunks, want 0 (cache miss)", c.calls)
+	}
+	d2.QueryRow(`SELECT COUNT(*) FROM chunks`).Scan(&n)
+	if n != 3 {
+		t.Fatalf("chunks after rebuild = %d, want 3 (rebuild must be idempotent)", n)
+	}
+}
+
+// countingEmb wraps fakeEmb and counts Embed calls.
+type countingEmb struct {
+	fakeEmb
+	calls int
+}
+
+func (c *countingEmb) Embed(ctx context.Context, t string) ([]float32, error) {
+	c.calls++
+	return c.fakeEmb.Embed(ctx, t)
 }
 
 func TestMineDBDropsShortTurns(t *testing.T) {

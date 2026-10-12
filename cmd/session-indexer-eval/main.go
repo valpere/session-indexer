@@ -33,6 +33,9 @@ func main() {
 }
 
 func run(data, cache, out string, modes []string, limit int) error {
+	if err := validateModes(modes); err != nil {
+		return err
+	}
 	convs, err := eval.LoadLoCoMo(data)
 	if err != nil {
 		return err
@@ -79,6 +82,19 @@ func run(data, cache, out string, modes []string, limit int) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(out, "report-"+rep.Date+".json"), b, 0o644)
+}
+
+// validateModes fails fast on an unknown mode — otherwise a typo would silently
+// fall through to the cosine path and report the wrong numbers.
+func validateModes(modes []string) error {
+	for _, m := range modes {
+		switch m {
+		case "cosine", "bm25", "naive", "cosine-mine", "bm25-mine":
+		default:
+			return fmt.Errorf("unknown mode %q (want cosine, bm25, naive, cosine-mine, bm25-mine)", m)
+		}
+	}
+	return nil
 }
 
 func evalOne(mode string, c eval.Conversation, cache string, emb *embed.Client, ks []int) ([]eval.QResult, error) {

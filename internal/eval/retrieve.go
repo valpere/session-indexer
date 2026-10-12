@@ -210,14 +210,17 @@ func BuildMineDB(path string, conv Conversation, emb embed.Embedder) (*sql.DB, e
 	first := ""
 	for _, t := range conv.Turns {
 		r := role(t.Speaker, &first)
-		ts := dateOrUnknown(t.Date)
-		if ts == "unknown" {
-			ts = time.Now().Format("2006-01-02")
+		ts := t.Date
+		if ts == "" {
+			ts = "1970-01-01" // fixed sentinel: a wall-clock date would differ between runs
 		}
-		_ = enc.Encode(map[string]any{
+		if err := enc.Encode(map[string]any{
 			"type": r, "sessionId": conv.ID, "timestamp": ts + "T00:00:00Z",
 			"message": map[string]any{"role": r, "content": t.Text},
-		})
+		}); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("write corpus: %w", err)
+		}
 	}
 	if err := f.Close(); err != nil {
 		return nil, err
