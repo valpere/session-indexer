@@ -101,6 +101,9 @@ session-indexer facts supersede <new-id> <old-id> --db .claude/sessions.db
 session-indexer sessions             --db .claude/sessions.db [--by-session] [--json]
 session-indexer list                 --db .claude/sessions.db [--limit N] [--since D] [--until D] [--role R] [--session ID] [--json]
 session-indexer show <chunk-id>      --db .claude/sessions.db [--json]
+
+# Inspect a transcript's structure (file path, no --db)
+session-indexer tree <jsonl-path>    [--json]
 session-indexer facts list           --db .claude/sessions.db [--limit N] [--since D] [--until D] [--min-confidence F] [--include-expired] [--json]
 ```
 

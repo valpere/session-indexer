@@ -21,6 +21,7 @@ import (
 	"github.com/valpere/session-indexer/internal/facts"
 	"github.com/valpere/session-indexer/internal/mine"
 	"github.com/valpere/session-indexer/internal/search"
+	"github.com/valpere/session-indexer/internal/tree"
 )
 
 // version is the current release; overridden at build time via
@@ -226,6 +227,27 @@ func main() {
 		},
 	}
 	showCmd.Flags().BoolVar(&showJSON, "json", false, "machine-readable output")
+
+	var treeJSON bool
+	treeCmd := &cobra.Command{
+		Use:   "tree <jsonl-path>",
+		Short: "Print a transcript's agent/subagent/tool-call tree (reads the file; no --db)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			s, err := tree.Build(args[0])
+			if err != nil {
+				return err
+			}
+			if treeJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(s)
+			}
+			tree.Render(os.Stdout, s)
+			return nil
+		},
+	}
+	treeCmd.Flags().BoolVar(&treeJSON, "json", false, "machine-readable output")
 
 	var bySession bool
 	var sessionsJSON bool
@@ -445,7 +467,7 @@ func main() {
 	factsCmd := &cobra.Command{Use: "facts", Short: "Query the distilled facts layer"}
 	factsCmd.AddCommand(factsSearchCmd, factsListCmd, factsGetCmd, factsRelatedCmd, factsSupersedeCmd)
 
-	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, listCmd, showCmd, sessionsCmd, distillCmd, factsCmd)
+	root.AddCommand(mineCmd, searchCmd, embedCmd, statsCmd, listCmd, showCmd, sessionsCmd, treeCmd, distillCmd, factsCmd)
 	if err := root.Execute(); err != nil {
 		switch {
 		case errors.Is(err, distill.ErrCircuitBreaker):
