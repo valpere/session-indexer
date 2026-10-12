@@ -23,7 +23,7 @@ Raw `go` invocations still work if you don't want to use make:
 
 ## Architecture
 
-Single Go binary, no daemon, no shared state between projects. Six subcommands via Cobra (`facts` has four child verbs):
+Single Go binary, no daemon, no shared state between projects. Cobra subcommands (`facts` has several child verbs):
 
 ```
 session-indexer mine    <jsonl-path> --db <path>        # parse JSONL → SQLite
@@ -37,6 +37,7 @@ session-indexer facts search/list/get/related/supersede --db <path>  # query the
 session-indexer sessions             --db <path> [--by-session]      # roll up by day (default) or session_id
 session-indexer list                 --db <path> [--limit N] [--since D] [--until D] [--role R] [--session ID]
 session-indexer show    <chunk-id>   --db <path>        # full chunk text + facts distilled from it
+session-indexer tree    <jsonl-path> [--json]           # agent/subagent/tool-call tree of one transcript (no --db)
 ```
 
 ### File Layout
@@ -61,6 +62,8 @@ internal/facts/
   facts.go                        — read verbs: Search (FTS5 BM25), List (no query, browse), Get (supersedes edges), Related (depth-1), BySourceChunk (provenance for `show`)
 internal/browse/
   browse.go                       — read-only enumeration without a query: ListChunks, GetChunk, Days, Sessions — backs `list`/`show`/`sessions`
+internal/tree/
+  types.go / parse.go / discover.go / build.go / render.go — structural transcript view (see Tree)
 ```
 
 ### Storage
@@ -110,6 +113,10 @@ No index exists on `session_date` — measured on a live 26k-chunk/150MB store,
 and adding an index would force another schema bump (and the re-mine that
 comes with it) for no measurable gain. Revisit only if a future schema bump
 happens anyway.
+
+### Tree
+
+`tree` is a read-only structural view of one JSONL transcript, deliberately separate from `internal/mine` (which flattens to text chunks and discards structure). It reads the file directly — no DB. Spawn tool calls (`Agent`/`Task`/`Workflow`) join to subagent files `<dir>/<session-uuid>/subagents/agent-<id>.jsonl` via the sidecar `agent-<id>.meta.json` field `toolUseId` (== the spawning `tool_use` block id); workflow agents live under `subagents/workflows/<run-id>/` and nest under a group node joined by the `runId` in the launch `toolUseResult`. Unmatched subagents attach to the root rather than being dropped. Tokens are `output_tokens` counted once per `requestId` (one turn spans several lines repeating cumulative usage). Status is `done` or `in-progress` (any tool call without a result). Format knowledge is ported from zoetrope's `transcript.rs`; agent/tool counts were cross-checked against `zoetrope inspect` on the 40 largest local sessions (all equal). Malformed lines are skipped, never fatal.
 
 ### Facts Layer
 

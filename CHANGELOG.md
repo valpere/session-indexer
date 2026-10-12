@@ -13,6 +13,10 @@ full per-PR history.
 ## [Unreleased]
 
 ### Added
+- `tree <jsonl-path>` (`--json`): read-only view of a transcript's agent →
+  subagent → tool-call structure (status, output tokens, tool ✓/✗/⏳ counts),
+  joined via each subagent's `toolUseId`. Reads the file directly — no `--db`,
+  no schema change. New package `internal/tree`.
 - `distill --context-cap` (default 200, previously hardcoded): the per-call
   facts-context block dominates prompt size — and Ollama Cloud bills by
   GPU-time, not per token — so the cap is now a tunable cost/quality dial.
