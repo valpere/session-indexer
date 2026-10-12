@@ -56,7 +56,9 @@ question, so recall is deterministic.
    chat utterances, while the lexically-specific evidence turn ranks lower.
 2. **Multi-hop "all evidence" recall is ≈0 for every mode** (single-turn
    retrieval cannot assemble several evidence turns at k≤10).
-. **Equal-weight hybrid does not beat BM25 on LoCoMo** (issue #88 step 1): RRF over cosine+BM25 lands between the two (R@1 0.152 vs BM25 0.262, MRR 0.243 vs 0.359) — the weak cosine ranking drags the fused list down. Untested: weighted fusion (e.g. BM25-heavy), a larger/smaller `depth`, other `k`. So on this benchmark the data supports "BM25 is the strong signal", not "fuse equally".
+3. **The `mine` noise filter costs almost nothing here** (`cosine` ≈
+   `cosine-mine`): dropping `<30`-char turns loses few evidence turns.
+4. **Equal-weight hybrid does not beat BM25 on LoCoMo** (issue #88 step 1): RRF over cosine+BM25 lands between the two (R@1 0.152 vs BM25 0.262, MRR 0.243 vs 0.359) — the weak cosine ranking drags the fused list down. Untested: weighted fusion (e.g. BM25-heavy), a larger/smaller `depth`, other `k`. So on this benchmark the data supports "BM25 is the strong signal", not "fuse equally".
 
 ## Caveats — read before acting on the numbers
 
