@@ -241,6 +241,10 @@ default. No index exists on `session_date`; a full scan is single-digit
 milliseconds even on a store with tens of thousands of chunks, so adding one
 isn't worth another schema bump.
 
+## Retrieval-quality eval
+
+`make eval` runs `cmd/session-indexer-eval` on the public [LoCoMo](https://github.com/snap-research/locomo) benchmark (CC BY-NC 4.0 — download `data/locomo10.json` into `tmp/eval/data/` yourself; it is never committed) and prints Recall@k / MRR / latency / context size for cosine, BM25 fallback, a naive keyword baseline, and the real `mine` pipeline. Needs a local Ollama with `bge-m3`. See [docs/retrieval-eval.md](docs/retrieval-eval.md) for method and first results.
+
 ## Embeddings
 
 Requires Ollama on `localhost:11434` with `bge-m3:latest`. Override with

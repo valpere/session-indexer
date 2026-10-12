@@ -13,6 +13,7 @@ full per-PR history.
 ## [Unreleased]
 
 ### Added
+- `make eval` / `cmd/session-indexer-eval`: retrieval-only quality harness (Recall@k, MRR, latency, context size) over the public LoCoMo benchmark — cosine vs BM25 fallback vs naive baseline, direct-insert vs through-`mine`. No LLM judge, no cloud calls, no schema change. New package `internal/eval`.
 - `tree <jsonl-path>` (`--json`): read-only view of a transcript's agent →
   subagent → tool-call structure (status, output tokens, tool ✓/✗/⏳ counts),
   joined via each subagent's `toolUseId`. Reads the file directly — no `--db`,

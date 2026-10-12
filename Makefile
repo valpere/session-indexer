@@ -1,4 +1,4 @@
-.PHONY: help build install test test-race test-pkg vet fmt clean
+.PHONY: help build install test test-race test-pkg vet fmt clean eval
 
 help:
 	@echo "Targets:"
@@ -28,6 +28,9 @@ test-pkg: ## go test one package — requires PKG=, e.g. make test-pkg PKG=./int
 
 vet: ## go vet ./...
 	go vet ./...
+
+eval: ## retrieval-quality eval on LoCoMo (needs Ollama + bge-m3 and tmp/eval/data/locomo10.json; not part of `make test`)
+	go run ./cmd/session-indexer-eval $(EVAL_ARGS)
 
 fmt: ## gofmt -w . (mutating)
 	gofmt -w .
