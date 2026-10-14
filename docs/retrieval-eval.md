@@ -127,7 +127,7 @@ The fact-query proxy above is lexically biased, so a second query set was built
 that does not share its evidence's vocabulary:
 `session-indexer-eval --real-db .claude/sessions.db --queries tmp/eval/recall.json --gen-queries 200`
 samples non-sensitive chunks (≥150 chars; anything matching secret/PII patterns
-is excluded *before* text leaves the machine), asks an LLM (`agy`,
+is excluded *before* text leaves the machine; the patterns cover secrets, tokens and e-mail addresses — not phone numbers or street addresses), asks an LLM (`agy`,
 `gemini-3.8-flash-medium` — a different family from the `glm` that distilled the
 facts and from `bge-m3`) to write the question a person would ask while only
 half-remembering each chunk, forbidding reuse of its words, and then drops in Go

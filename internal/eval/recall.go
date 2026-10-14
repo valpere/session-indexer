@@ -33,10 +33,10 @@ type Generator func(ctx context.Context, prompt string) (string, error)
 
 // GenStats counts what happened to the generated queries; safe to print.
 type GenStats struct {
-	Generated, Kept, Overlap, BadIndex, Malformed, BatchErrors int
+	Generated, Kept, Overlap, BadIndex, Malformed, BatchErrors, Sensitive int
 }
 
-var sensitiveRe = regexp.MustCompile(`(?i)(\b(password|passwd|passphrase|secret|api[_-]?key|token|bearer|credential|private key)s?\b|\.env\b|BEGIN [A-Z ]*KEY|\bsk-[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9]{10,}|[\w.+-]+@[\w-]+\.[\w.-]+|[A-Za-z0-9+/_=-]{32,})`)
+var sensitiveRe = regexp.MustCompile(`(?i)((password|passwd|passphrase|secret|api[_-]?key|token|bearer|credential|private key)|\.env\b|BEGIN [A-Z ]*KEY|\bsk-[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9]{10,}|[\w.+-]+@[\w-]+\.[\w.-]+|[A-Za-z0-9+/_=-]{32,})`)
 
 // Sensitive reports whether text looks like it holds a secret, credential or
 // e-mail address. It errs towards excluding: a false positive only shrinks the
@@ -145,6 +145,17 @@ func GenerateQueries(ctx context.Context, gen Generator, turns []Turn, batch int
 	}
 	var st GenStats
 	var qas []QA
+	// Defence in depth: SampleChunks already filters, but this function is what
+	// actually sends text out, so it must not trust its caller.
+	safe := turns[:0:0]
+	for _, t := range turns {
+		if Sensitive(t.Text) {
+			st.Sensitive++
+			continue
+		}
+		safe = append(safe, t)
+	}
+	turns = safe
 	for lo := 0; lo < len(turns); lo += batch {
 		if err := ctx.Err(); err != nil {
 			return qas, st, err
@@ -176,6 +187,9 @@ func GenerateQueries(ctx context.Context, gen Generator, turns []Turn, batch int
 			}
 		}
 	}
+	if len(qas) == 0 && st.BatchErrors > 0 {
+		return nil, st, fmt.Errorf("every generator batch failed (%d); nothing generated", st.BatchErrors)
+	}
 	return qas, st, nil
 }
 
@@ -185,9 +199,12 @@ func AgyGenerator(model string) Generator {
 	return func(ctx context.Context, prompt string) (string, error) {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "agy", "-p", prompt, "--model", model, "--mode", "plan", "--output-format", "json").Output()
+		cmd := exec.CommandContext(ctx, "agy", "-p", prompt, "--model", model, "--mode", "plan", "--output-format", "json")
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("agy: %w", err)
+			return "", fmt.Errorf("agy: %w: %s", err, strings.TrimSpace(tail(stderr.String(), 200)))
 		}
 		var r struct {
 			Response string `json:"response"`
@@ -197,4 +214,11 @@ func AgyGenerator(model string) Generator {
 		}
 		return r.Response, nil
 	}
+}
+
+func tail(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[len(r)-n:])
+	}
+	return s
 }

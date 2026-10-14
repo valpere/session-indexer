@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -313,9 +314,11 @@ func generateRecall(conv eval.Conversation, ro recallOpts) error {
 		return fmt.Errorf("-gen-queries needs the agy CLI on PATH: %w", err)
 	}
 	// Generate from 1.3× the target: the overlap filter drops a share.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	sample := eval.SampleChunks(conv.Turns, ro.gen*13/10)
 	fmt.Fprintf(os.Stderr, "sending %d non-sensitive chunks to agy (%s) in batches\n", len(sample), ro.model)
-	qas, st, err := eval.GenerateQueries(context.Background(), eval.AgyGenerator(ro.model), sample, 0)
+	qas, st, err := eval.GenerateQueries(ctx, eval.AgyGenerator(ro.model), sample, 0)
 	if err != nil {
 		return err
 	}
@@ -329,7 +332,7 @@ func generateRecall(conv eval.Conversation, ro recallOpts) error {
 	if err := os.WriteFile(ro.file, b, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("generated %d, kept %d (saved %d), dropped: overlap %d, bad index %d, malformed %d; failed batches %d\n",
-		st.Generated, st.Kept, len(qas), st.Overlap, st.BadIndex, st.Malformed, st.BatchErrors)
+	fmt.Printf("generated %d, kept %d (saved %d), dropped: sensitive %d, overlap %d, bad index %d, malformed %d; failed batches %d\n",
+		st.Generated, st.Kept, len(qas), st.Sensitive, st.Overlap, st.BadIndex, st.Malformed, st.BatchErrors)
 	return nil
 }

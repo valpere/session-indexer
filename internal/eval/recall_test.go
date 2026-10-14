@@ -18,6 +18,8 @@ func TestSensitive(t *testing.T) {
 		"token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
 		"the secret value is 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 		"cat .env and check DATABASE_URL",
+		"export DB_PASSWORD=abc and MY_API_KEY=def",
+		"set my_secret in the config",
 	} {
 		if !Sensitive(s) {
 			t.Errorf("want sensitive: %q", s)
@@ -90,13 +92,13 @@ func TestSampleChunks(t *testing.T) {
 func TestGenerateQueries(t *testing.T) {
 	turns := []Turn{
 		{DiaID: "c1", Text: "We decided to enable write-ahead logging because concurrent readers stalled"},
-		{DiaID: "c2", Text: "The tokenizer keeps diacritics so Ukrainian words stay distinct in search"},
+		{DiaID: "c2", Text: "The segmenter keeps diacritics so Ukrainian words stay distinct in search"},
 		{DiaID: "c3", Text: "Embeddings are stored as little-endian float32 blobs in the vectors table"},
 	}
 	gen := func(_ context.Context, prompt string) (string, error) {
 		// answers by batch position: 1 = paraphrase, 2 = copies distinctive words, 3 = garbage index
 		return `[{"chunk":1,"query":"why did we pick journaling for simultaneous access"},` +
-			`{"chunk":2,"query":"keeps diacritics Ukrainian words distinct tokenizer"},` +
+			`{"chunk":2,"query":"keeps diacritics Ukrainian words distinct segmenter"},` +
 			`{"chunk":9,"query":"orphan question about nothing"}]`, nil
 	}
 	qas, st, err := GenerateQueries(context.Background(), gen, turns, 3)
@@ -112,10 +114,41 @@ func TestGenerateQueries(t *testing.T) {
 }
 
 func TestGenerateQueriesBatchErrorSkipsBatch(t *testing.T) {
-	turns := []Turn{{DiaID: "c1", Text: strings.Repeat("alpha beta gamma ", 20)}}
-	gen := func(context.Context, string) (string, error) { return "", errors.New("agy down") }
-	qas, st, err := GenerateQueries(context.Background(), gen, turns, 10)
-	if err != nil || len(qas) != 0 || st.BatchErrors != 1 {
+	turns := []Turn{{DiaID: "c1", Text: strings.Repeat("alpha beta gamma ", 20)}, {DiaID: "c2", Text: strings.Repeat("delta omega sigma ", 20)}}
+	calls := 0
+	gen := func(context.Context, string) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", errors.New("agy down")
+		}
+		return `[{"chunk":1,"query":"why pick journaling for simultaneous access"}]`, nil
+	}
+	qas, st, err := GenerateQueries(context.Background(), gen, turns, 1)
+	if err != nil || len(qas) != 1 || st.BatchErrors != 1 {
 		t.Fatalf("qas=%v st=%+v err=%v", qas, st, err)
+	}
+}
+
+func TestGenerateQueriesNeverSendsSensitive(t *testing.T) {
+	turns := []Turn{
+		{DiaID: "c1", Text: "export DB_PASSWORD=hunter2 before running the migration scripts"},
+		{DiaID: "c2", Text: strings.Repeat("alpha beta gamma ", 20)},
+	}
+	var sent string
+	gen := func(_ context.Context, prompt string) (string, error) {
+		sent += prompt
+		return `[{"chunk":1,"query":"something unrelated entirely here"}]`, nil
+	}
+	_, st, err := GenerateQueries(context.Background(), gen, turns, 10)
+	if err != nil || strings.Contains(sent, "hunter2") || st.Sensitive != 1 {
+		t.Fatalf("sensitive text sent or not counted: err=%v st=%+v", err, st)
+	}
+}
+
+func TestGenerateQueriesAllBatchesFailIsError(t *testing.T) {
+	turns := []Turn{{DiaID: "c1", Text: strings.Repeat("alpha beta gamma ", 20)}}
+	gen := func(context.Context, string) (string, error) { return "", errors.New("auth expired") }
+	if _, _, err := GenerateQueries(context.Background(), gen, turns, 10); err == nil {
+		t.Fatal("want error when every batch fails")
 	}
 }
