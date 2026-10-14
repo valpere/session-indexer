@@ -5,10 +5,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,13 +23,16 @@ import (
 
 func main() {
 	var (
-		data   = flag.String("data", "tmp/eval/data/locomo10.json", "path to locomo10.json (CC BY-NC 4.0 — keep local, never commit)")
-		cache  = flag.String("cache", "tmp/eval/db", "directory for per-conversation SQLite stores (doubles as the embedding cache)")
-		out    = flag.String("out", "tmp/eval", "directory for the JSON report")
-		modes  = flag.String("modes", "", "comma-separated (default: all non-mine modes for -real-db, plus cosine-mine for LoCoMo): cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine")
-		limit  = flag.Int("convs", 0, "evaluate only the first N conversations (0 = all)")
-		realDB = flag.String("real-db", "", "evaluate a real session store instead of LoCoMo: facts are the questions, their source chunks the evidence (private data: snapshotted under -cache, only aggregates are printed)")
-		facts  = flag.Int("facts", 300, "with -real-db: how many facts to sample (cosine scans every vector per query, so keep this modest)")
+		data    = flag.String("data", "tmp/eval/data/locomo10.json", "path to locomo10.json (CC BY-NC 4.0 — keep local, never commit)")
+		cache   = flag.String("cache", "tmp/eval/db", "directory for per-conversation SQLite stores (doubles as the embedding cache)")
+		out     = flag.String("out", "tmp/eval", "directory for the JSON report")
+		modes   = flag.String("modes", "", "comma-separated (default: all non-mine modes for -real-db, plus cosine-mine for LoCoMo): cosine, bm25, naive, hybrid, cosine-mine, bm25-mine, hybrid-mine")
+		limit   = flag.Int("convs", 0, "evaluate only the first N conversations (0 = all)")
+		realDB  = flag.String("real-db", "", "evaluate a real session store instead of LoCoMo: facts are the questions, their source chunks the evidence (private data: snapshotted under -cache, only aggregates are printed)")
+		facts   = flag.Int("facts", 300, "with -real-db: how many facts to sample (cosine scans every vector per query, so keep this modest)")
+		queries = flag.String("queries", "", "with -real-db: JSON file of recall-style queries (from -gen-queries) used instead of fact-queries; private, keep under tmp/")
+		genN    = flag.Int("gen-queries", 0, "with -real-db and -queries: sample N non-sensitive chunks, have the generator write a recall-style query for each, save to -queries and exit (chunk text is sent to the generator)")
+		genMod  = flag.String("gen-model", "gemini-3.8-flash-medium", "model for -gen-queries (agy CLI, see `agy models`)")
 	)
 	flag.Parse()
 	if *modes == "" {
@@ -37,7 +43,7 @@ func main() {
 	}
 	var err error
 	if *realDB != "" {
-		err = runReal(*realDB, *cache, *out, strings.Split(*modes, ","), *facts)
+		err = runReal(*realDB, *cache, *out, strings.Split(*modes, ","), *facts, recallOpts{file: *queries, gen: *genN, model: *genMod})
 	} else {
 		err = run(*data, *cache, *out, strings.Split(*modes, ","), *limit)
 	}
@@ -170,7 +176,7 @@ func validateRealModes(modes []string) error {
 // live file is never opened for writing), then facts become queries and their
 // source chunks the evidence. Output is aggregate metrics only — never chunk
 // or fact text — so the numbers are safe to quote while the data stays private.
-func runReal(realDB, cache, out string, modes []string, nFacts int) error {
+func runReal(realDB, cache, out string, modes []string, nFacts int, ro recallOpts) error {
 	if err := validateRealModes(modes); err != nil {
 		return err
 	}
@@ -202,6 +208,20 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 	if err != nil {
 		return err
 	}
+	queryKind := "fact-queries"
+	switch {
+	case ro.gen > 0:
+		return generateRecall(conv, ro)
+	case ro.file != "":
+		b, err := os.ReadFile(ro.file)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(b, &conv.QAs); err != nil {
+			return fmt.Errorf("read %s: %w", ro.file, err)
+		}
+		queryKind = "recall-queries"
+	}
 	emb := embed.NewClient()
 	for _, m := range modes {
 		if (m == "cosine" || m == "hybrid") && !emb.Available() {
@@ -221,11 +241,11 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 			return fmt.Errorf("store has no embeddings for %s (it has %v); run `session-indexer embed` first", tag, models)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "real store: %d chunks, %d sampled fact-questions\n", len(conv.Turns), len(conv.QAs))
+	fmt.Fprintf(os.Stderr, "real store: %d chunks, %d %s\n", len(conv.Turns), len(conv.QAs), queryKind)
 
 	ks := []int{1, 3, 5, 10}
 	idx := eval.ContentIndex(conv.Turns)
-	rep := eval.Report{Dataset: fmt.Sprintf("real session store (private; %d chunks, %d fact-queries)", len(conv.Turns), len(conv.QAs)),
+	rep := eval.Report{Dataset: fmt.Sprintf("real session store (private; %d chunks, %d %s)", len(conv.Turns), len(conv.QAs), queryKind),
 		Date: time.Now().Format("2006-01-02"), Ks: ks}
 	for _, m := range modes {
 		var r eval.Retriever
@@ -254,7 +274,7 @@ func runReal(realDB, cache, out string, modes []string, nFacts int) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(out, "report-real-"+rep.Date+".json"), b, 0o644)
+	return os.WriteFile(filepath.Join(out, "report-real-"+rep.Date+reportSuffix(ro)+".json"), b, 0o644)
 }
 
 // needsEmbeddings reports whether any mode searches by vector, i.e. whether the
@@ -266,4 +286,53 @@ func needsEmbeddings(modes []string) bool {
 		}
 	}
 	return false
+}
+
+// recallOpts selects recall-style queries (generated, or loaded from file) over
+// the default fact-queries for a -real-db run.
+type recallOpts struct {
+	file  string // JSON QA list; read for evaluation, written by generation
+	gen   int    // >0: generate this many queries and exit
+	model string
+}
+
+func reportSuffix(ro recallOpts) string {
+	if ro.file != "" {
+		return "-recall"
+	}
+	return ""
+}
+
+// generateRecall samples non-sensitive chunks, asks the generator for a
+// recall-style query each, and saves the survivors to ro.file. The file is as
+// private as the store (queries paraphrase chunk text); only counts are printed.
+func generateRecall(conv eval.Conversation, ro recallOpts) error {
+	if ro.file == "" {
+		return fmt.Errorf("-gen-queries needs -queries <file> to write to")
+	}
+	if _, err := exec.LookPath("agy"); err != nil {
+		return fmt.Errorf("-gen-queries needs the agy CLI on PATH: %w", err)
+	}
+	// Generate from 1.3× the target: the overlap filter drops a share.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	sample := eval.SampleChunks(conv.Turns, ro.gen*13/10)
+	fmt.Fprintf(os.Stderr, "sending %d non-sensitive chunks to agy (%s) in batches\n", len(sample), ro.model)
+	qas, st, err := eval.GenerateQueries(ctx, eval.AgyGenerator(ro.model), sample, 0)
+	if err != nil {
+		return err
+	}
+	if len(qas) > ro.gen {
+		qas = qas[:ro.gen]
+	}
+	b, err := json.MarshalIndent(qas, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(ro.file, b, 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("generated %d, kept %d (saved %d), dropped: sensitive %d, overlap %d, bad index %d, malformed %d; failed batches %d\n",
+		st.Generated, st.Kept, len(qas), st.Sensitive, st.Overlap, st.BadIndex, st.Malformed, st.BatchErrors)
+	return nil
 }

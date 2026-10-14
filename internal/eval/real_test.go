@@ -202,3 +202,19 @@ func TestSnapshotSeesUncheckpointedWALWrites(t *testing.T) {
 		t.Fatalf("snapshot chunks = %d, want 5 (WAL contents must be included)", n)
 	}
 }
+
+func TestSnapshotRelativePath(t *testing.T) {
+	src := seedReal(t, 2)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(wd, src)
+	if err != nil {
+		t.Skip("no relative path to temp dir")
+	}
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := Snapshot(rel, dst); err != nil {
+		t.Fatalf("relative src %q: %v", rel, err)
+	}
+}
