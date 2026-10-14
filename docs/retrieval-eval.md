@@ -120,3 +120,44 @@ data alone.** The measured gap is real but the query model is biased toward
 BM25, and hybrid does not beat BM25 here. A defensible next step needs labelled
 queries that are *not* derived from their evidence (e.g. human-written
 recall queries with a known target) — until then, leave `search` as is.
+
+## Real store, recall-style queries (private, #88 step 3 input)
+
+The fact-query proxy above is lexically biased, so a second query set was built
+that does not share its evidence's vocabulary:
+`session-indexer-eval --real-db .claude/sessions.db --queries tmp/eval/recall.json --gen-queries 200`
+samples non-sensitive chunks (≥150 chars; anything matching secret/PII patterns
+is excluded *before* text leaves the machine), asks an LLM (`agy`,
+`gemini-3.8-flash-medium` — a different family from the `glm` that distilled the
+facts and from `bge-m3`) to write the question a person would ask while only
+half-remembering each chunk, forbidding reuse of its words, and then drops in Go
+any query whose content-word stems overlap the chunk by more than 25%. Run the
+same command without `--gen-queries` to evaluate. Chunk text is sent to the
+generator; the query file stays under gitignored `tmp/` and only aggregates are
+reported.
+
+N=200 queries (220 generated, 0 dropped by the overlap filter, 4 of 26 batches
+failed). One target chunk per query, 38,317 chunks:
+
+| mode | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| cosine | 0.020 | 0.065 | 0.100 | 0.037 |
+| hybrid | 0.020 | 0.030 | 0.060 | 0.027 |
+| bm25 | 0.000 | 0.000 | 0.005 | 0.001 |
+| naive | 0.000 | 0.000 | 0.000 | 0.000 |
+
+- **The ordering flips**: on recall-style queries cosine is clearly best and
+  BM25 is near zero, the opposite of the fact-query and LoCoMo results. The
+  default (`cosine`-first, FTS only as fallback) is the right one for this use.
+- Hybrid (equal-weight RRF) is worse than cosine alone here, and it was no
+  better than BM25 on fact-queries, so it earns nothing on either set.
+- Absolute numbers are low: the target is one specific chunk among many
+  near-duplicates from the same discussions, and the queries are deliberately
+  vocabulary-free. Read them as a ranking of methods, not as expected recall.
+- Caveats: model-generated (not human) queries, N=200 (cosine R@10 ≈ ±4
+  points), single project, mixed UA/EN, the generator saw only a 700-char prefix
+  of each chunk.
+
+**Conclusion for #88 step 3: leave `search` defaults unchanged.** Neither
+BM25-first nor hybrid wins on both query styles; cosine-first wins where it
+matters (recall) and loses only on the lexical proxy.

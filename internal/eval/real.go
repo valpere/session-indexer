@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -14,6 +15,11 @@ import (
 // live store (which a Stop hook may be writing) is never modified and the
 // evaluation never races it. dst must not exist.
 func Snapshot(src, dst string) error {
+	// A relative src would be parsed as a URI authority ("file:.claude/x"), so absolutise it.
+	src, err := filepath.Abs(src)
+	if err != nil {
+		return fmt.Errorf("resolve source: %w", err)
+	}
 	// url.URL escapes ?, # and % in the path; a hand-built "file:"+src would let
 	// them be read as URI syntax and silently drop mode=ro.
 	dsn := (&url.URL{Scheme: "file", Path: src, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}).String()
