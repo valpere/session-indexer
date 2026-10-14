@@ -54,10 +54,11 @@ COUNT=$(grep -r --include="*.ts" --include="*.tsx" --include="*.js" \
   --exclude="*.test.*" --exclude="*.spec.*" \
   -l "console\.log(" src/ 2>/dev/null | wc -l | tr -d ' ')
 
-# Go
+# Go — library code only: cmd/ holds CLI entry points whose fmt.Print* is
+# intended user-facing output, not leftover debugging
 COUNT=$(grep -r --include="*.go" \
   --exclude="*_test.go" \
-  -l "fmt\.Println\|fmt\.Printf\|fmt\.Print(" . 2>/dev/null \
+  -l "fmt\.Println\|fmt\.Printf\|fmt\.Print(" internal/ 2>/dev/null \
   | grep -v "_test.go" | wc -l | tr -d ' ')
 
 # Python
