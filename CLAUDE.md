@@ -79,7 +79,7 @@ Tombstone resolution is filter-based (`WHERE until IS NULL`), not chain-walking.
 
 ## Stop Hook Integration
 
-`.claude/settings.local.json` wires two Stop-hook commands into a single `Stop` entry: `bash .claude/hooks/session-end.sh` (writes `session-log.md`) and `bash .claude/hooks/session-index.sh` (runs `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db`). The hook fires with JSON on stdin containing `transcript_path` and `session_id`. JSONL files may be deleted by Claude Code cleanup shortly after — mine at hook time. The `session-index.sh` guard silently no-ops until `session-indexer` is on `PATH`.
+`.claude/settings.local.json` wires two Stop-hook commands into a single `Stop` entry: `bash .claude/hooks/session-end.sh` (writes `session-log.md`) and `bash .claude/hooks/session-index.sh` (runs `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db`). The hook fires with JSON on stdin containing `transcript_path` and `session_id`. JSONL files may be deleted by Claude Code cleanup shortly after — mine at hook time. The `session-index.sh` guard silently no-ops until `session-indexer` is on `PATH`. `session-end.sh` keeps inside `SESSION_END_BUDGET_S` (default 57s, under the 60s limit) so `session-log.md` is always written — a hook killed mid-chain writes nothing, the 2h skip never engages, and the next stop retries the same chain.
 
 > Note: in Claude Code 2.1.x, multiple **top-level** `Stop` array entries are not all fired — only the first runs. Put multiple Stop commands in the **same** entry's `hooks` array (the structure used here).
 
