@@ -430,11 +430,11 @@ byte-identical pre-batching prompt. Batching exists for the same billing
 reason as `--context-cap`: N chunks in one call cost far less than N
 separate calls, since the shared context block is paid once per call.
 
-`--retries` (default 2) is the number of extra attempts for a chunk whose call
+`--retries` (default 2) is the number of extra attempts for a chunk (or batch) whose call
 errors (e.g. HTTP 429 from Ollama Cloud, transient timeout) before it is left
 for the next run; each retry backs off. `--circuit-breaker` (default 5) stops
 `distill` early — no new chunks dispatched, in-flight ones finish — after that
-many consecutive chunks exhaust their retries and still fail; 0 disables it.
+many consecutive chunks (batches) exhaust their retries and still fail; 0 disables it.
 
 ### Tombstone / supersedes resolution
 
