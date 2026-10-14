@@ -1,3 +1,7 @@
+---
+name: session-end
+description: "Write today's summary of the session into .claude/session-log.md, a rolling per-project log with one entry per day (last 10 kept). Usage: /session-end"
+---
 # /session-end
 
 Manages `.claude/session-log.md` — a per-project rolling log of session
@@ -118,9 +122,9 @@ fi
 Session ends (exit / /exit)
   └─ Stop hook: .claude/hooks/session-end.sh   (configured ✓)
        ├─ Skip if /session-end ran within 2h (file mtime check)
-       ├─ Try agy -p  — Gemini 3.5 Flash (Low → Medium → High), Gemini 3.1 Pro (Low → High)
+       ├─ Try agy -p  — Gemini 3.8 Flash (Low → Medium → High), Gemini 3.1 Pro (Low → High)
        ├─ Try opencode run --format json  — ollama/glm-5.2:cloud, kimi-k2.7-code:cloud,
-       │                                    minimax-m3:cloud, qwen3.5:cloud
+       │                                    minimax-m3:cloud, deepseek-v4.1-flash:cloud
        └─ Fallback: raw transcript excerpt
 
 Next session opens
@@ -131,8 +135,8 @@ Next session opens
 ```
 
 LLM fallback chain (Stop hook):
-1. `agy` — Gemini 3.5 Flash (cheapest first), Gemini 3.1 Pro
-2. `opencode` — glm-5.2:cloud, kimi-k2.7-code:cloud, minimax-m3:cloud, qwen3.5:cloud
+1. `agy` — Gemini 3.8 Flash (cheapest first), Gemini 3.1 Pro
+2. `opencode` — glm-5.2:cloud, kimi-k2.7-code:cloud, minimax-m3:cloud, deepseek-v4.1-flash:cloud
 3. Raw transcript excerpt (fallback)
 
 The skill works standalone (without hooks) — you just run `/session-end`
