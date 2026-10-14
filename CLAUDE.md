@@ -51,7 +51,7 @@ Ollama REST: `POST localhost:11434/api/embed`, model `bge-m3:latest` (1024 dims)
 
 ### Search
 
-Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Scale assumption: <10k chunks. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
+Primary: embed query → exhaustive cosine over all `embeddings` rows loaded into memory. Measured at 38k chunks (the author's real store): ~210 ms per query (see `docs/retrieval-eval.md`). Cost is linear in chunk count; revisit (ANN index or pre-filter) only if latency stops being acceptable. Fallback to FTS5 BM25 when Ollama is unavailable **OR** the store has zero embeddings (e.g. mined while Ollama was down); FTS uses per-term OR recall, not phrase match. Output notes when the fallback is used.
 
 ### Retrieval eval
 
