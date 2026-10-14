@@ -16,6 +16,15 @@ description: "Project self-diagnosis: session-indexer. Usage: /revival [lightwei
 /revival lightweight  → explicit lightweight scan
 ```
 
+**Revival vs housekeeping vs find-bugs.** `/revival` is a read-only
+*diagnosis* of the whole project (structure, test coverage, dependency
+freshness, store state, Ollama/CI habitat) with a fitness score — use it to
+orient yourself or after a long break. `/housekeeping` is a pass/fail
+*hygiene* checklist (stale branches, tracked secrets, vet/gofmt) — use it
+before shipping. `/find-bugs` audits the *diff of the current branch* against
+a base ref for bugs only — use it before opening a PR. They overlap only on
+test-count and build checks; none replaces another.
+
 ---
 
 ## PERSONA
