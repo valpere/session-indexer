@@ -7,8 +7,10 @@ help:
 
 BINARY   := bin/session-indexer
 TEST_PKG ?= ./...
-VERSION  := $(shell git describe --tags --exact-match 2>/dev/null || echo "0.2.0")
-LDFLAGS  := -ldflags "-X main.version=$(VERSION)"
+# On an exact release tag, stamp the tag (same as release.yml); otherwise keep
+# main.version from cmd/session-indexer/main.go (a hardcoded fallback here went stale).
+VERSION  := $(patsubst v%,%,$(shell git describe --tags --exact-match 2>/dev/null))
+LDFLAGS  := $(if $(VERSION),-ldflags "-X main.version=$(VERSION)")
 
 build: ## build to bin/session-indexer
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/session-indexer
