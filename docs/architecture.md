@@ -520,10 +520,10 @@ session-indexer/
 │   ├── requirements.md
 │   ├── use-cases.md
 │   └── architecture.md
-├── .claude/                   — tracked (agents/, hooks/, skills/); only
-│   │                            sessions.db, session-checkpoint.json, session-state.md,
-│   │                            legacy session-log.md, settings.local.json and
-│   │                            telemetry.jsonl are gitignored (per-machine state)
+├── .claude/                   — tracked (agents/, hooks/, skills/); per-machine
+│   │                            state is gitignored: sessions.db*, session-checkpoint.json
+│   │                            (+ .lock), session-state.md, legacy session-log.md,
+│   │                            settings.local.json, telemetry.jsonl — see .gitignore
 │   ├── hooks/
 │   │   ├── session-end.sh    — Stop: verbatim recent turns → session-checkpoint.json (no LLM)
 │   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db
