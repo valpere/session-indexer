@@ -1,25 +1,29 @@
 ---
-name: ship
-description: "session-indexer ship pipeline: issue → implement → review → merge → close. Usage: /ship [--yes|-y] [issue-number | title]"
+name: deliver
+description: "session-indexer deliver pipeline: issue → implement → review → merge → close. Usage: /deliver [--yes|-y] [issue-number | title]"
 ---
 
-# Skill: /ship
+# Skill: /deliver
+
+<!-- Renamed from /ship on 2026-11-24: Claude Code now has a built-in /ship (commit, PR,
+review, watch — never merges) that shadows a project skill of that name. -->
+
 # Issue → Merged PR Pipeline
 
 ```
-/ship                    → auto-select next open issue (asks confirmation)
-/ship --yes              → auto-select and proceed, skip UI prompts
-/ship -y                 → same as --yes
-/ship {issue-id}         → ship a specific issue by number
-/ship {issue title}      → find by title, then ship
-/ship --yes {issue-id}   → skip UI prompts (technical ambiguities always ask)
+/deliver                    → auto-select next open issue (asks confirmation)
+/deliver --yes              → auto-select and proceed, skip UI prompts
+/deliver -y                 → same as --yes
+/deliver {issue-id}         → ship a specific issue by number
+/deliver {issue title}      → find by title, then ship
+/deliver --yes {issue-id}   → skip UI prompts (technical ambiguities always ask)
 
   → resolve issue        (fetch title + description)
   → analyze ambiguities  (scan description + codebase → ask decisions before coding)
   → mark in-progress
   → code-generator       (implement → tests → review agents → simplify → docs → PR)
   → /fix-review          (multi-model rounds + Claude Arbiter — does NOT merge)
-  → merge PR             (/ship owns the merge)
+  → merge PR             (/deliver owns the merge)
   → post comment         (summary: what changed, PR link)
   → close issue
   → log to /self-learn (if installed)
@@ -196,7 +200,7 @@ then poll every 30s (max 30 min).
 
 If conflicts: stop — "PR #{PR_NUMBER} has merge conflicts. Resolve and re-run."
 
-**Timeout:** 30 min. If still open: ask user to merge manually, then re-run `/ship {ISSUE_NUMBER}`
+**Timeout:** 30 min. If still open: ask user to merge manually, then re-run `/deliver {ISSUE_NUMBER}`
 to complete the tracker update.
 
 Verify:
@@ -244,7 +248,7 @@ On failure: warn, ask user to close {ISSUE_URL} manually.
 Skip silently if `.claude/skills/self-learn/` doesn't exist in this project.
 
 `/self-learn log`'s Step 1 is written for interactive human invocation
-("Ask the user: what happened?") — `/ship` runs this step itself, without
+("Ask the user: what happened?") — `/deliver` runs this step itself, without
 a human in the loop, so do **not** wait for input. Classify and log
 directly using what you already observed during this run, following the
 self-learn LOG step's own field schema and "if the user describes the
@@ -263,7 +267,7 @@ pipeline on it — note it in the final report's Warnings and move on.
 ## STEP 7: Final Report
 
 ```
-## /ship complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
+## /deliver complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
 
 Issue:   {ISSUE_URL}  (closed)
 PR:      {PR_URL}  (merged, branch deleted)
@@ -292,8 +296,8 @@ Append **Warnings** for any skipped items or non-fatal failures.
 1. Issue must be ready/approved before shipping — not auto-verified.
 2. One PR per issue — reuse existing branch PR if it exists.
 3. Never force-push — rebase if branch diverged from main.
-4. **`/ship` owns the merge (STEP 3), not `/fix-review`.**
-5. All review agents run inside code-generator — do not re-launch in `/ship`.
+4. **`/deliver` owns the merge (STEP 3), not `/fix-review`.**
+5. All review agents run inside code-generator — do not re-launch in `/deliver`.
 6. Tracker updates are best-effort — surface failures, never silently skip.
 7. 30-minute merge timeout — stop and report. Never loop indefinitely.
 8. Docs-only PRs skip /fix-review — the Pyramid has nothing to evaluate.

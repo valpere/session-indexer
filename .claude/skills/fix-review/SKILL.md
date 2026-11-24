@@ -35,7 +35,7 @@ OpenRouter was removed 2026-05-30 after it went pay-only.
 "Clean" means no fixes were reverted, the PR has no merge conflicts, and
 local gates either passed or only failed in layers this PR doesn't touch
 (diff-scope rule). If anything blocks merge, the skill asks the user once
-before acting. Caller (`/ship` or you) doesn't need to merge separately.
+before acting. Caller (`/deliver` or you) doesn't need to merge separately.
 
 ---
 

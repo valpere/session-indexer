@@ -88,8 +88,9 @@ Tombstone resolution is filter-based (`WHERE until IS NULL`), not chain-walking.
 ## Before Any Commit on a Feature/Chore Branch
 
 There is no dedicated "commit" skill in this project — ad hoc commit
-requests bypass `/ship`'s structural freshness check (it always branches
-from an updated `main`). Before committing directly onto the current
+requests bypass `/deliver`'s structural freshness check (it always branches
+from an updated `main`). `/deliver` is the project skill formerly named `/ship`
+(renamed 2026-11-24: Claude Code's built-in `/ship` shadows it). Before committing directly onto the current
 branch:
 
 1. Check whether the current branch already has a merged PR: `gh pr list --state merged --search "head:<branch-name>"`.
