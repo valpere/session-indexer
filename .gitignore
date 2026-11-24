@@ -70,3 +70,8 @@ sbin/
 # dreaming reports + run log: local analysis artifacts, not committed
 # (Val, 2026-10-14; W37, W39-W41 were committed once in #100 — untracked since)
 .claude/dreaming/reports/
+
+# Session recovery state (deterministic Stop-hook checkpoint + reviewed handoff)
+.claude/session-checkpoint.json
+.claude/session-checkpoint.json.lock
+.claude/session-state.md

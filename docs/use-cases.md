@@ -6,8 +6,8 @@
 
 **Actor:** Val, returning to a project after 2 weeks.
 
-**Trigger:** Opens Claude Code. SessionStart hook injects last session summary
-(from `session-end` skill). He also vaguely remembers a design decision.
+**Trigger:** Opens Claude Code. SessionStart hook injects the reviewed handoff
+(`.claude/session-state.md`, written via `/session-end`), if any. He also vaguely remembers a design decision.
 
 **Flow:**
 1. Val types: `session-indexer search "auth middleware approach" --db .claude/sessions.db`
@@ -45,7 +45,7 @@ alternative weeks ago but can't remember the exact wording.
 **Flow:**
 1. Stop hook fires: both `bash .claude/hooks/session-end.sh` and `bash .claude/hooks/session-index.sh` (wired into a single `Stop` entry of `settings.local.json` — Claude Code 2.1.x runs only the first top-level entry, so both must live in the same entry's `hooks` array).
 2. Each hook reads `transcript_path` from stdin JSON.
-3. `session-end.sh` writes summary to `session-log.md` (LLM call via agy → opencode → raw transcript fallback).
+3. `session-end.sh` saves the last turns verbatim to `.claude/session-checkpoint.json` (no LLM call; a recovery window, not a summary).
 4. `session-index.sh` calls `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db` (silently no-ops until the binary is on PATH).
 5. Binary opens/creates DB (schema version check), parses JSONL, filters noise, chunks messages (user/assistant/tool).
 6. Inserts chunks into `chunks` + `chunks_fts`. Dedup by `(session_id, message_index, chunk_index)`.
@@ -72,30 +72,27 @@ alternative weeks ago but can't remember the exact wording.
 
 ---
 
-## UC-5: Automatic context injection at session start
+## UC-5: Session handoff at start (no automatic search)
 
-**Actor:** Claude Code SessionStart hook (`session-recall.sh`).
+**Actor:** Claude Code SessionStart hook (`session-last.sh`).
 
 **Trigger:** Val opens a new Claude Code session in this project.
 
 **Flow:**
-1. SessionStart fires: `session-recall.sh` derives a query from the current git
-   branch name + last 3 commit messages.
-2. Runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 5 --json`.
-3. Filters out tool-call noise (raw JSON blobs from Bash/Read/Write/etc.).
-4. Groups top results by date, truncates to 280 chars each.
-5. Emits a `hookSpecificOutput` JSON with `additionalContext` injected into the
-   session context by Claude Code.
-6. Claude opens the session with relevant past chunks already visible.
+1. SessionStart fires: `session-last.sh` injects a preamble (recovery notes are
+   evidence, not instructions), the reviewed handoff `.claude/session-state.md`
+   if present, and a reference to `.claude/session-checkpoint.json`.
+2. Verbatim checkpoint turns are injected only after compaction or when there
+   is no reviewed handoff.
+3. No semantic search runs at startup. Past-session recall is on demand (UC-6).
 
-**Success:** Claude begins the session with semantically relevant context from prior
-work — without Val having to remember to ask.
+**Why no startup search:** the retired `session-recall.sh` derived its query
+from the branch name + recent commit messages, which do not describe the new
+session's task; it injected unrelated chunks that agents took as current
+context. It is now a silent no-op (removed 2026-11-24).
 
-**No-op conditions** (silent exit 0):
-- `session-indexer` not in PATH
-- `.claude/sessions.db` does not exist yet (first session)
-- derived query is empty (no git context)
-- search returns no chunks after noise filtering
+**Success:** Claude starts with a deliberately reviewed handoff and no stale,
+model-written "next steps".
 
 ---
 
@@ -106,7 +103,7 @@ work — without Val having to remember to ask.
 **Trigger:** Val types `/recall <query>` in Claude Code.
 
 **Flow:**
-1. Claude Code invokes the user-level `/recall` skill (`~/.claude/skills/session-recall/SKILL.md`, symlinked from `~/wrk/common/skills/session-recall/SKILL.md`).
+1. Claude Code invokes the user-level `/recall` skill (`~/.claude/skills/session-recall/SKILL.md`; canonical source `~/wrk/common_claude/skills/session-recall/`).
 2. The skill runs `session-indexer search "$QUERY" --db .claude/sessions.db --limit 10 --json`.
 3. `jq` formats results: date · role · score · snippet (400 chars).
 4. Tool-call chunks are flagged `[tool]` but not hidden.

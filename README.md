@@ -5,12 +5,12 @@
 
 Per-project semantic search over Claude Code session history. Indexes JSONL
 transcripts into a per-project SQLite store; retrieves via bge-m3 embeddings
-(Ollama) with FTS5 BM25 fallback. Automatically injects relevant past context
-at session start.
+(Ollama) with FTS5 BM25 fallback. Recall is on demand (`/recall`, `search`) —
+nothing is auto-injected by semantic search at session start.
 
 **Problem it solves:** returning to a project after a week and needing to find
-"what did we decide about X" across dozens of past sessions. `session-end`
-gives you "where I left off last time"; `session-indexer` gives you "what we
+"what did we decide about X" across dozens of past sessions. `/session-end`
+keeps a reviewed handoff of "where I left off"; `session-indexer` gives you "what we
 discussed across all history" — by semantic similarity, not grep.
 
 **Scope: single developer, single machine.** This indexes *your own*
@@ -59,17 +59,18 @@ go install ./cmd/session-indexer
 ollama pull bge-m3:latest
 
 # 3. Wire the hooks into your project (one-time setup)
-#    Copy session-index.sh + session-recall.sh → .claude/hooks/
+#    Copy session-index.sh (+ session-end.sh, session-last.sh, _lib/) → .claude/hooks/
 #    Update .claude/settings.local.json with Stop + SessionStart entries
-#    /recall is a user-level skill (~/.claude/skills/session-recall/, symlinked
-#    from ~/wrk/common/skills/session-recall/) — no per-project install needed.
+#    /recall is a user-level skill (~/.claude/skills/session-recall/;
+#    canonical source ~/wrk/common_claude/skills/session-recall/) — no per-project install.
 #    See "Hook Setup" below for the exact steps.
 
 # 4. End a Claude Code session — Stop hook mines it into .claude/sessions.db
 #    (The hook silently no-ops until session-indexer is in PATH)
 
-# 5. Open a new session — SessionStart hook injects relevant past context
-#    automatically based on current git branch + recent commits
+# 5. Open a new session — SessionStart hook injects the reviewed handoff
+#    (.claude/session-state.md) and a pointer to the verbatim checkpoint;
+#    no automatic semantic search
 
 # 6. Search manually at any time
 session-indexer search "config validation approach" --db .claude/sessions.db
@@ -284,8 +285,7 @@ Two Stop hooks run on every session end (wired in a single `Stop` entry of
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash .claude/hooks/session-last.sh",   "timeout": 10 },
-          { "type": "command", "command": "bash .claude/hooks/session-recall.sh", "timeout": 15 }
+          { "type": "command", "command": "bash .claude/hooks/session-last.sh", "timeout": 10 }
         ]
       }
     ]
@@ -294,7 +294,12 @@ Two Stop hooks run on every session end (wired in a single `Stop` entry of
 ```
 
 `session-index.sh` silently no-ops until `session-indexer` is on PATH.
-`session-recall.sh` no-ops until `.claude/sessions.db` exists (after the first indexed session).
+`session-end.sh` saves the last turns verbatim to `.claude/session-checkpoint.json`
+(no LLM call). `session-last.sh` injects the reviewed handoff
+`.claude/session-state.md` (written via `/session-end`) plus a checkpoint
+reference. Both skip under `CLAUDE_NON_INTERACTIVE=1`. Startup semantic search
+(`session-recall.sh`) was retired 2026-11-24 — it injected unrelated chunks;
+use `/recall` instead.
 
 Hook logs go to `~/.cache/<project-name>/hooks.log`.
 

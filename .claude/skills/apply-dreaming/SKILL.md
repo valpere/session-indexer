@@ -1,25 +1,27 @@
 ---
 name: apply-dreaming
-description: "Read the latest session-indexer dreaming report and
-  apply high-confidence findings. Routes constraint/architecture/code
+description: "Read the latest central dreaming report (session-indexer
+  findings only) and apply high-confidence findings. Routes constraint/architecture/code
   changes through a GitHub issue -> /ship (no /backlog step in this
   project). Direct branch+PR only for tooling scripts that don't
-  touch CLAUDE.md's Key Constraints. Annotates report with
-  [applied YYYY-MM-DD] markers."
+  touch CLAUDE.md's Key Constraints. Records outcomes in issues/PRs; never edits the central report."
 user-invocable: true
 argument-hint: "[week|latest]"
 ---
 
 # /apply-dreaming (session-indexer)
 
-Walks each dreaming-report finding interactively and leaves an audit
-trail (`[applied YYYY-MM-DD]` / `[planned …]` / `[skipped …]` markers
-appended to the report).
+Walks each session-indexer finding of the **central** dreaming report
+(`~/wrk/common_claude/reports/dreaming/`, produced by
+`~/wrk/common_claude/dreaming/dreaming.sh`) interactively. Per-project
+dreaming (`.claude/dreaming/dreaming.sh`) was retired 2026-11-02; old local
+reports under `.claude/dreaming/reports/` are history, not instructions.
+The central report lives in another repo: do not annotate or edit it — the
+audit trail is the issue/PR that cites `§<id>`.
 
 ## When to invoke
 
-- Monday morning after the Sunday cron-run produced a fresh report.
-- Or any time after a manual `.claude/dreaming/dreaming.sh` run.
+- After a fresh central dreaming report appears.
 - Or `/apply-dreaming` (with optional `latest` or `2026-W##` argument).
 
 ## Inputs
@@ -33,7 +35,7 @@ appended to the report).
 
 ```bash
 WEEK="${1:-latest}"
-DIR=".claude/dreaming/reports"
+DIR="$HOME/wrk/common_claude/reports/dreaming"
 if [[ "$WEEK" == "latest" ]]; then
   REPORT=$(find "$DIR" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-W*.md' \
            -printf '%T@ %p\n' 2>/dev/null \
@@ -45,7 +47,9 @@ fi
 
 ### 2. Parse into structured items
 
-Read REPORT. For each numbered sub-item under a section, extract:
+Read REPORT. Keep only items that cite session-indexer (its repo path or
+`~/.claude/projects/-home-val-wrk-projects-session-indexer-session-indexer/`);
+other projects' items are out of scope. For each remaining numbered sub-item under a section, extract:
 
 - `id`, `title`, `confidence` (high/medium/low)
 - `evidence` — file:line / commit sha
@@ -65,12 +69,8 @@ Read REPORT. For each numbered sub-item under a section, extract:
 field, inherit it from the enclosing section. Default `medium` only
 when neither declares one.
 
-**Idempotency — skip already-marked items.** If the next non-blank
-line after an item starts with `> [applied …]`, `> [planned …]`,
-`> [skipped …]`, or `> [manual-review-required …]`, skip it silently.
-The report is appended to (never rewritten) on each pass. Print a
-summary at the start: `2026-W##: M new items (N already-processed
-skipped)`.
+**Idempotency.** Before acting on an item, check `gh issue list --state all
+--search "<report-week> §<id>"` — skip items that already have an issue or PR.
 
 ### 3. Show TL;DR + counts
 
@@ -107,13 +107,12 @@ For `low` (non-constraint): skip silently unless the user opted in.
   `update-tooling`. `gh issue create` with a body citing the dreaming
   finding, then `/ship <issue-number>`.
 - **Direct branch+PR path** only for `branch-hygiene` cleanup (no code
-  change, just a git-history fix) and `.claude/dreaming/*.sh` script
-  edits that don't touch `CLAUDE.md`'s Key Constraints.
+  change, just a git-history fix).
 
 #### `constraint-fix` / `code-change` / `update-docs` / `update-tooling` — issue-and-ship
 
 1. `gh issue create --title "<slug>" --body "..."` citing report
-   `§<id>`, evidence (file:line/commit), suggested fix, acceptance
+   `<YYYY-W##> §<id>`, evidence (file:line/commit), suggested fix, acceptance
    criteria. For `constraint-fix`, explicitly name which Key
    Constraint is at risk.
 2. Tell the user: "Created issue #<N>. Run `/ship <N>` to implement."
@@ -130,42 +129,15 @@ For `low` (non-constraint): skip silently unless the user opted in.
    <new-branch>`, verify, open a fresh PR. Don't leave orphaned commits
    on the stale branch.
 
-#### `update-tooling` (dreaming script only, not the prompt) — branch+PR
-
-For fixes to `dreaming.sh` itself:
-
-1. `git switch -c fix-dreaming-w##-<slug>` off `main`.
-2. Edit the script; smoke-test with `bash -n .claude/dreaming/dreaming.sh`.
-3. Commit, push, open a PR, merge per the project's normal PR
-   convention.
-
 #### `other` — manual review
 
-Print suggestion + evidence. Don't apply. Annotate
-`[manual-review-required 2026-MM-DD]`.
+Print suggestion + evidence. Don't apply; list it under "Manual review"
+in the final summary.
 
-### 6. Annotate report
-
-After each applied item, append (never rewrite the original):
-
-```markdown
-> [applied 2026-MM-DD: <action>; commit <sha>; PR <num>]
-```
-
-For created issues:
-```markdown
-> [planned 2026-MM-DD: issue #<N>; awaiting /ship]
-```
-
-For skipped:
-```markdown
-> [skipped 2026-MM-DD: <reason>]
-```
-
-### 7. Final summary
+### 6. Final summary
 
 ```
-Applied: N (direct branch-hygiene / tooling PRs)
+Applied: N (direct branch-hygiene PRs)
 Issues created: M (awaiting /ship)
 Manual review: K
 Skipped: P
@@ -197,7 +169,7 @@ Next steps: run /ship on each issue (constraint-fix issues first).
   scrutiny as a multi-project regression report, not a shrug because
   the model's confidence label said "low."
 - ❌ Commit onto a branch that already has a merged PR.
-- ❌ Modify the report's original suggestions (annotate only).
+- ❌ Edit the central report (another repo) — cite it, don't annotate it.
 - ❌ Apply a finding without verifying it against current code first.
 
 ## Companion skills
@@ -208,6 +180,5 @@ Next steps: run /ship on each issue (constraint-fix issues first).
 
 ## See also
 
-- `.claude/dreaming/dreaming-prompt.md` — what the dreaming pass looks for.
-- `.claude/dreaming/dreaming.sh` — how the pass is run (systemd timer).
+- `~/wrk/common_claude/dreaming/` — the central dreaming pass (what it looks for, how it runs).
 - `CLAUDE.md` "Key Constraints" section — target of `constraint-fix` findings.
