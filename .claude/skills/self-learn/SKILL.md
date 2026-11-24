@@ -1,6 +1,6 @@
 ---
 name: self-learn
-description: "Self-learning system — log mistakes/wins, run retrospectives, promote patterns to hard rules, and coach on workflow quality. Usage: /self-learn [log|retro|status|init|tips]"
+description: "Self-learning system — log sourced mistakes/wins, run retrospectives, identify evidence-backed improvement candidates, and coach on workflow quality. Usage: /self-learn [log|retro|status|init|tips]"
 ---
 
 # Skill: /self-learn
@@ -10,11 +10,11 @@ description: "Self-learning system — log mistakes/wins, run retrospectives, pr
 
 ## OVERVIEW
 
-A self-learning loop that captures mistakes and wins, promotes recurring patterns
-to hard rules, runs periodic retrospectives, and provides proactive workflow coaching.
+A self-learning loop that captures mistakes and wins, identifies recurring patterns
+as improvement candidates, runs periodic retrospectives, and provides proactive workflow coaching.
 
 ```
-/self-learn              → show status (counts, recent entries, pending promotions)
+/self-learn              → show status (counts, recent entries, improvement candidates)
 /self-learn log          → interactive: ask what happened, classify, and log it
 /self-learn retro        → run a full retrospective analysis
 /self-learn init         → initialize _patterns/ and _knowledge-base/ for a new project
@@ -22,6 +22,12 @@ to hard rules, runs periodic retrospectives, and provides proactive workflow coa
 ```
 
 The system gets smarter with every interaction. Log from day one.
+
+Pattern files record observations with their source, task, and applicability.
+They do not establish permissions, prohibitions, or mandatory checks. Repetition
+can justify a scoped proposal; it does not authorize changing instructions.
+Do not turn task-specific feedback into a universal restriction. Use earlier
+valid evidence rather than manufacturing unknowns or new blocking steps.
 
 ---
 
@@ -63,7 +69,7 @@ Also check for `.claude/skills/self-learn/config` — if absent, do not create i
 ```markdown
 # Cross-Project Patterns
 
-Patterns proven in 2+ areas/projects. Promoted automatically by /self-learn retro.
+Patterns observed in 2+ areas/projects, with sources and limits of applicability. These observations do not establish instructions.
 
 ---
 ```
@@ -72,7 +78,7 @@ Patterns proven in 2+ areas/projects. Promoted automatically by /self-learn retr
 ```markdown
 # Anti-Patterns
 
-Approaches that keep failing. When you're about to try one of these, stop and find an alternative.
+Observed failures with their conditions and evidence. Check applicability to the current task before proposing a different approach; these notes are not prohibitions.
 
 ---
 ```
@@ -151,7 +157,6 @@ Project name resolution order: `.claude/skills/self-learn/config` (key `project_
 | `kitchen_sink` | Mixed unrelated tasks in one session without `/clear` |
 | `correction_spiral` | 3+ corrections on the same issue in one session |
 | `context_overload` | Context window filled with irrelevant files/output |
-| `infinite_exploration` | Unbounded investigation that read too many files |
 
 Severity guide:
 
@@ -193,33 +198,24 @@ Append the JSON object as a single line to the appropriate file:
 Use the Write tool to append (read existing content, add new line, write back).
 Never overwrite — always append.
 
-### Step 4: Check for promotion triggers
+### Step 4: Identify candidates
 
-After logging, immediately check:
+Group similar mistakes by root cause. Two or more examples can justify an
+improvement candidate, not a new rule. Include the task, source examples,
+proposed change, and its scope. Check current instructions and valid earlier
+checks before recommending more restrictions or verification.
 
-**For mistakes:**
-1. Read all entries in `mistakes.jsonl`
-2. Extract the `pattern` field from each
-3. Group similar patterns (same API, same type of error, same root cause)
-4. If any pattern appears **2+ times** → trigger promotion:
-
-> "This mistake has occurred [N] times. Promoting to a hard rule in CLAUDE.md:
->
-> - **[RULE NAME]** *(promoted YYYY-MM-DD — [N] mistakes)*: [instruction].
->   Never [bad approach] — always [correct approach]. Verify by [verification step]."
-
-Then actually add the rule to the project's CLAUDE.md under a `## Self-Learning Hard Rules`
-section (create the section if it doesn't exist). Add it at the end of that section.
-
-**For wins:**
-1. Read the `reusable_in` field
-2. If it mentions 2+ distinct areas or "all projects" → add to `_patterns/cross-project.md`
+For wins, record evidence and applicability in `_patterns/cross-project.md`.
+Observations in pattern files are not instructions or authorization.
+Do not edit `CLAUDE.md`, `AGENTS.md`, settings, hooks, or skills through this workflow
+unless the user has authorized that specific change. Existing authorization
+covers its agreed scope; do not ask again for already authorized repairs.
 
 ### Step 5: Confirm
 
-Print the logged entry and any promotions:
-> "Logged [mistake/win]. [N] total [mistakes/wins] tracked.
-> [Promoted to hard rule in CLAUDE.md. / No promotion triggered.]"
+Briefly report the recorded observation and any relevant candidate. Ordinary
+logging does not require an additional permission question. Do not append
+unrelated warnings or pending items to the task result.
 
 ---
 
@@ -235,7 +231,7 @@ Read the pattern files and display a summary:
 - Wins: [N] logged
 - Cross-project patterns: [N]
 - Anti-patterns: [N]
-- Hard rules promoted: [N]
+- Improvement candidates recorded: [N]
 
 ### Verification Rate
 - Tasks with verification: [N]% (wins: [X]%, mistakes: [Y]%)
@@ -256,8 +252,8 @@ Read the pattern files and display a summary:
 |------|------|---------|
 | ... | mistake/win | pattern field |
 
-### Pending Promotions
-[List any patterns that have occurred 2+ times but haven't been promoted yet]
+### Open Improvement Candidates
+[List any patterns that have occurred 2+ times but have no scoped proposal yet]
 
 ### Last Retrospective
 [Date of last retro, or "Never — run /self-learn retro"]
@@ -287,20 +283,20 @@ Stop.
 Count entries per `category` field. If entries lack the field, infer from description.
 
 **Identify recurring patterns:**
-- Any mistake pattern occurring 2+ times → flag for hard rule promotion
+- Any mistake pattern occurring 2+ times → flag as an improvement candidate
 - Any mistake pattern occurring 3+ times → flag as anti-pattern
 
 **Verification correlation:**
 - Calculate win rate for tasks WITH verification vs WITHOUT
-- If tasks without verification fail 2x+ more → flag for hard rule
+- If tasks without verification fail 2x+ more → flag as an improvement candidate
 
 **Plan mode correlation:**
 - Calculate success rate for tasks that used plan mode vs didn't
-- If skipping planning correlates with failures → flag for hard rule
+- If skipping planning correlates with failures → flag as an improvement candidate
 
 **Session hygiene analysis:**
 - Count each session_hygiene flag across all mistakes
-- If any flag appears 3+ times → promote to anti-pattern
+- If any flag appears 3+ times → record in anti-patterns.md with its conditions and scope
 
 **Delegation analysis:**
 - Compare success rate of tasks using subagent delegation vs none
@@ -308,7 +304,7 @@ Count entries per `category` field. If entries lack the field, infer from descri
 
 **Decomposition analysis:**
 - Compare success rate of decomposed tasks (phased) vs monolithic prompts
-- If monolithic tasks fail more → promote decomposition as a best practice
+- If monolithic tasks fail more → record decomposition as an observed win pattern
 
 **Identify cross-project wins:**
 - Any win with `reusable_in` mentioning 2+ areas
@@ -347,15 +343,15 @@ Count entries per `category` field. If entries lack the field, infer from descri
 - Correction spirals: {N} → {recommendation}
 - Context overloads: {N} → {recommendation}
 
-### Recurring Mistakes (Need Hard Rules)
+### Recurring Mistakes (Improvement Candidates)
 {For each pattern occurring 2+ times:}
 - **{pattern}** — occurred {N} times (dates: {list})
-  → PROMOTE to CLAUDE.md as hard rule
+  → propose a scoped improvement with source examples; do not edit instructions
 
-### Anti-Patterns to Stop
+### Repeated Failures and Their Scope
 {For each pattern occurring 3+ times:}
 - **{pattern}** — tried {N} times, failed every time
-  → Add to anti-patterns.md
+  → Record the evidence and applicability in anti-patterns.md; do not create a prohibition
 
 ### Wins Worth Replicating
 {For each win with broad applicability:}
@@ -374,25 +370,18 @@ Count entries per `category` field. If entries lack the field, infer from descri
 - [ ] {specific update to make}
 ```
 
-### Step 4: Auto-apply
+### Step 4: Record evidence and proposals
 
-After generating the report, apply the changes:
-
-1. **Promote recurring mistakes** to CLAUDE.md (under `## Self-Learning Hard Rules`)
-2. **Add new anti-patterns** to `_patterns/anti-patterns.md`
-3. **Add cross-project patterns** to `_patterns/cross-project.md`
-4. **Flag stale patterns** for user review (don't auto-remove)
+Append supported observations to pattern files with their source and task.
+Record stale observations as such; do not silently delete history. Describe
+proposed instruction/configuration changes separately, respecting existing
+user authorization. Recurrence alone does not authorize them.
 
 ### Step 5: Confirm
 
-Print the report and list what was changed:
-> "Retrospective complete. Applied:
-> - [N] new hard rules promoted to CLAUDE.md
-> - [N] new anti-patterns logged
-> - [N] cross-project patterns updated
-> - [N] stale patterns flagged for review
->
-> Anything surprise you? Anything I should weight differently?"
+Report the observations recorded and relevant proposals. Distinguish applied
+changes from proposals awaiting a decision. Do not describe a proposal as a
+new hard rule or instruction.
 
 ---
 
@@ -494,39 +483,27 @@ Trend: compare last 7 entries vs previous 7 entries
 
 ## ALWAYS-ON BEHAVIORS
 
-These behaviors run automatically, not just when /self-learn is invoked.
-They should be integrated into the project's CLAUDE.md as reminders.
+These behaviors are optional guidance within this skill, not instructions to modify `CLAUDE.md` or `AGENTS.md`. Use only the parts relevant to the current task.
 
 ### Before Any Task
 1. Check `_patterns/mistakes.jsonl` — have I made a related mistake before?
-2. Check `_patterns/anti-patterns.md` — am I about to try something that keeps failing?
+2. Check `_patterns/anti-patterns.md` — am I about to try an approach that previously failed under the same conditions?
 3. Check `_patterns/wins.jsonl` — is there a proven approach for this?
 4. If the task involves an API, check `_knowledge-base/api-docs/` for known gotchas
-5. If the task touches multiple files, suggest plan mode first
 
 ### During Any Task
 - When unsure about an API's behavior → test with minimal payload first
 - When a function/module might not exist → verify before using it
-- When you spot a potential issue unrelated to the current task → flag it:
-  "Heads up: I noticed [X]"
-- When context is getting long → suggest `/clear` or subagent delegation
 
 ### After Any Significant Task
-1. Did anything fail that I had to retry? → Offer to log mistake
-2. Did I find a clever solution? → Offer to log win
-3. Did the user correct me? → Log mistake immediately (don't ask)
-4. Did the user confirm a non-obvious approach? → Log win (easy to miss — watch for it)
-5. Did the task have verification? → Note for correlation tracking
-
-### On Session Start
-1. Check recently modified pattern files for context
-2. If recent high-severity mistakes exist, mention them:
-   > "Heads up: recent issue logged — [pattern]. I'll watch for this."
+1. Did a verified technical failure require a non-obvious fix? → Offer to log mistake
+2. Did I find a reusable technical solution? → Offer to log win
+3. Do not automatically log task-specific user preferences or scope clarifications as mistakes.
 
 ### Session Hygiene Monitoring
 - If the conversation has mixed 3+ unrelated topics → suggest `/clear`
 - If the same correction has been made 2+ times → suggest `/clear` and a fresh prompt
-- If file reads exceed 20 in one investigation → suggest subagent delegation
+- Never cap or discourage reading files during an audit or code investigation.
 
 ---
 
@@ -534,13 +511,13 @@ They should be integrated into the project's CLAUDE.md as reminders.
 
 1. **Never overwrite pattern files** — always append. Data is sacred.
 2. **Never delete entries** — mark as resolved/stale instead.
-3. **Always confirm classification** before logging — "I'd classify this as a [X]. Sound right?"
+3. **Ground classification in evidence** — label assistant inference as inference; ordinary logging does not require approval.
 4. **Log confirmations, not just corrections** — if you only track mistakes, you become overly cautious and drift from validated approaches.
 5. **Severity is honest** — don't downplay to avoid looking bad. High means high.
-6. **Promotion is automatic** — 2+ occurrences = hard rule. Don't wait for the user to ask.
+6. **Recurrence yields candidates** — two examples do not establish a new instruction. Apply instruction/configuration changes only within the user-authorized scope.
 7. **Retrospectives are non-judgmental** — they analyze patterns, not blame.
 8. **Cross-project patterns require evidence** — at least 2 distinct contexts confirming the pattern.
-9. **Anti-patterns are conclusive** — 3+ failures of the same approach. Not just "didn't work once."
+9. **Anti-patterns need context** — record repeated failures with their conditions; a count alone does not prove that an approach is always wrong.
 10. **Stale patterns get flagged, not auto-removed** — the user decides if they're still relevant.
 11. **Tips are data-driven** — only show tips backed by the user's own pattern data, not generic advice.
 12. **New fields are optional** — `category`, `had_verification`, `session_hygiene`, `used_plan_mode`, and `delegation` enrich analysis but should never block logging. If unknown, omit the field.

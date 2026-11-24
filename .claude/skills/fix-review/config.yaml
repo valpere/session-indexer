@@ -55,7 +55,7 @@ reviewers:
   # tool that returns non-empty output wins); each adapter is invoked
   # read-only (no edits, no shell execution) — see lib/agents.sh for the
   # exact per-tool flags. Replaces the old ad-hoc reviewers.cli block
-  # (migrated 2026-08-20 per ~/wrk/common/skills/fix-review/lib/agents.sh,
+  # (migrated 2026-08-20 per ~/wrk/common_claude/skills/fix-review/lib/agents.sh,
   # commit c6c0698): agy needs the prompt as a positional argument after
   # `-p`, not via stdin (verified — stdin-only returns a generic greeting
   # instead of answering) and not as the value of `--prompt`/`-p` (both
@@ -76,7 +76,7 @@ reviewers:
     - { tool: agy, model: "Gemini 3.8 Flash (Low)" }
     - { tool: omp }
     - { tool: codex }
-    - { tool: opencode, model: "opencode/nemotron-3-ultra-free" }
+    - { tool: opencode, model: "opencode/mimo-v2.6-flash-free" }  # nemotron-3-ultra-free retired 2026-11-24 ("Model unavailable")
     - { tool: kilo }
 
 # ---------------------------------------------------------------------------

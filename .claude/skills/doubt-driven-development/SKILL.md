@@ -7,13 +7,10 @@ description: Subjects every non-trivial decision to a fresh-context adversarial 
 # Adversarial Fresh-Context Review, In-Flight
 
 Adapted from [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
-(MIT) — genuinely self-contained, kept close to verbatim. Conceptually
-complements `comprehension-gate` (a related skill, not installed in this
-project — it verifies the *human* understands a hard-to-reverse action;
-this one has the *agent* doubt its own non-trivial decisions before they
-stand) and `improve`/`tech-lead` (both installed here — those give
-post-hoc verdicts on a finished artifact; this is in-flight, while
-course-correction is still cheap).
+(MIT) — genuinely self-contained, kept close to verbatim. Has the *agent* doubt its own non-trivial decisions before they stand.
+Complements `improve`/`tech-lead` (those are post-hoc
+verdicts on a finished artifact; this is in-flight, while course-correction
+is still cheap).
 
 ## Overview
 
@@ -233,7 +230,6 @@ If 3 cycles is "obviously insufficient" because the artifact is large: the artif
 ## Interaction with Other Skills
 
 - **`fix-review`**: complementary. `/fix-review` is post-hoc multi-model PR verdict; doubt-driven is in-flight per-decision, before a PR exists. Use both.
-- **`comprehension-gate`**: adjacent, different subject. comprehension-gate verifies the *human* understands a hard-to-reverse action before it runs; doubt-driven verifies the *agent's own reasoning* about a non-trivial artifact before it stands. Both can fire on the same decision — comprehension-gate as the human-facing gate, doubt-driven as the self-check that precedes it.
 - **`improve`**: `/improve` gives a SHIP IT / IMPROVE IT / RETHINK IT / KILL IT verdict on a finished plan or design. Doubt-driven is upstream of that — it stress-tests the reasoning while the plan is still being formed, not after.
 - **Write tests as the disproof attempt**: when the artifact makes a behavioral claim, a failing test written first (red-green-refactor) *is* the doubt step — it's a fresh, mechanical disproof attempt that doesn't need a spawned reviewer.
 - **Subagent orchestration**: this skill orchestrates from the main session only — see Loading Constraints above and `reference_agent_skill_tool_boundary` (memory) for why a subagent calling another subagent's skill doesn't work reliably.
@@ -251,3 +247,4 @@ After applying doubt-driven development:
 - [ ] In interactive mode, cross-model was **explicitly offered** to the user (regardless of artifact stakes) and the response was acknowledged in the output
 - [ ] In non-interactive mode, cross-model was skipped and the skip was announced
 - [ ] Any external CLI invocation was preceded by a PATH check, a working-binary test, syntax confirmation with the user, and explicit authorization to run
+- [ ] Any external CLI invocation used a read-only/plan-mode sandbox flag (e.g. `--sandbox read-only`, `--approval-mode plan`), not a full-write mode
