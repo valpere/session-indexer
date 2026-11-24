@@ -20,7 +20,7 @@ jobs:
       - name: Build binaries
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          LDFLAGS="-X main.version=${VERSION}"
+          LDFLAGS="-X main.version=${VERSION#v}"   # v0.4.0 tag -> 0.4.0, same as main.go
           mkdir -p dist
           for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             GOOS="${platform%/*}"
