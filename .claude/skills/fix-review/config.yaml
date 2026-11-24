@@ -104,7 +104,7 @@ ollama_api_url_local: http://localhost:11434/api/chat
 #   - Confirms, escalates, or dismisses each still-open item
 #   - Adds any issues the models missed
 #   - Applies fixes, commits, then pushes
-# No API call — Claude is the Arbiter. Merge is owned by /ship, not /fix-review.
+# No API call — Claude is the Arbiter. Merge is owned by /deliver, not /fix-review.
 # ---------------------------------------------------------------------------
 
 arbiter: claude   # do not change

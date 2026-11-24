@@ -88,7 +88,7 @@ Tombstone resolution is filter-based (`WHERE until IS NULL`), not chain-walking.
 ## Before Any Commit on a Feature/Chore Branch
 
 There is no dedicated "commit" skill in this project — ad hoc commit
-requests bypass `/ship`'s structural freshness check (it always branches
+requests bypass `/deliver`'s structural freshness check (project skill, renamed from `/ship` 2026-11-24 — Claude Code's built-in `/ship` shadows it) (it always branches
 from an updated `main`). Before committing directly onto the current
 branch:
 

@@ -2,7 +2,7 @@
 name: apply-dreaming
 description: "Read the latest central dreaming report (session-indexer
   findings only) and apply high-confidence findings. Routes constraint/architecture/code
-  changes through a GitHub issue -> /ship (no /backlog step in this
+  changes through a GitHub issue -> /deliver (no /backlog step in this
   project). Direct branch+PR only for tooling scripts that don't
   touch CLAUDE.md's Key Constraints. Records outcomes in issues/PRs; never edits the central report."
 user-invocable: true
@@ -105,7 +105,7 @@ For `low` (non-constraint): skip silently unless the user opted in.
 - **Issue-and-ship path** for anything touching correctness or the
   Key Constraints: `constraint-fix`, `code-change`, `update-docs`,
   `update-tooling`. `gh issue create` with a body citing the dreaming
-  finding, then `/ship <issue-number>`.
+  finding, then `/deliver <issue-number>`.
 - **Direct branch+PR path** only for `branch-hygiene` cleanup (no code
   change, just a git-history fix).
 
@@ -115,8 +115,8 @@ For `low` (non-constraint): skip silently unless the user opted in.
    `<YYYY-W##> §<id>`, evidence (file:line/commit), suggested fix, acceptance
    criteria. For `constraint-fix`, explicitly name which Key
    Constraint is at risk.
-2. Tell the user: "Created issue #<N>. Run `/ship <N>` to implement."
-3. Don't implement directly — `/ship` owns the issue → implement →
+2. Tell the user: "Created issue #<N>. Run `/deliver <N>` to implement."
+3. Don't implement directly — `/deliver` owns the issue → implement →
    `/fix-review` → merge → close pipeline.
 
 #### `branch-hygiene` — direct fix, no code change
@@ -138,14 +138,14 @@ in the final summary.
 
 ```
 Applied: N (direct branch-hygiene PRs)
-Issues created: M (awaiting /ship)
+Issues created: M (awaiting /deliver)
 Manual review: K
 Skipped: P
 
 PRs opened: <list>
 Issues pending: <list>
 
-Next steps: run /ship on each issue (constraint-fix issues first).
+Next steps: run /deliver on each issue (constraint-fix issues first).
 ```
 
 ## Constraints (CRITICAL)
@@ -174,8 +174,8 @@ Next steps: run /ship on each issue (constraint-fix issues first).
 
 ## Companion skills
 
-- `/ship` — issue → implement → `/fix-review` → merge → close.
-- `/fix-review` — parallel multi-model review + Claude Arbiter (part of `/ship`).
+- `/deliver` — issue → implement → `/fix-review` → merge → close.
+- `/fix-review` — parallel multi-model review + Claude Arbiter (part of `/deliver`).
 - `/revival`, `/find-bugs`, `/improve` — complementary read-only checks.
 
 ## See also

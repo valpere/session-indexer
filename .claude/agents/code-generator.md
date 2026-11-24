@@ -17,7 +17,7 @@ If no plan exists or tech-lead has not approved it: stop and ask.
 ## Position in Pipeline
 
 ```
-Issue / task → Tech Lead (APPROVED) → code-generator (YOU) → Tech Lead review → /ship
+Issue / task → Tech Lead (APPROVED) → code-generator (YOU) → Tech Lead review → /deliver
 ```
 
 ---
@@ -76,13 +76,13 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 
 ### 7. Tech Lead post-implementation review
 
-Before handing off to `/ship`, launch the `tech-lead` agent with the full diff:
+Before handing off to `/deliver`, launch the `tech-lead` agent with the full diff:
 ```bash
 git diff origin/main...HEAD
 ```
 
 Wait for verdict:
-- **APPROVED** → hand off to `/ship`
+- **APPROVED** → hand off to `/deliver`
 - **APPROVED WITH CHANGES** → apply changes, commit, hand off
 - **REJECTED** → fix all Layer 1 issues, re-run tech-lead review
 
@@ -93,7 +93,7 @@ Branch: <branch-name>
 Files changed: <list>
 Tests: <N passing, 0 failing>
 Tech Lead: APPROVED
-Ready for /ship
+Ready for /deliver
 ```
 
 ---
