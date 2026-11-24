@@ -12,7 +12,25 @@ full per-PR history.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
+### Security
+- Built with Go 1.26.11 (was 1.26.9): fixes stdlib GO-2026-6809 (`crypto/x509`) and
+  GO-2026-6859 (`net/http`), both reachable via `distill`'s HTTP client (#105, #108).
+
+### Changed
+- `make build`/`make install` off a release tag no longer stamp a stale hardcoded `0.2.0`;
+  the binary reports `main.version` from source.
+- `modernc.org/sqlite` 1.58.0 → 1.62.0 (SQLite 3.54.1; prepared statements no longer
+  re-planned on every execution). No schema change.
+- Session hooks shipped in `.claude/hooks/` (#109): Stop writes a verbatim
+  `.claude/session-checkpoint.json` instead of an LLM summary; SessionStart injects only the
+  reviewed `.claude/session-state.md`; startup semantic search removed (it injected unrelated
+  chunks) — recall is on demand via `/recall`.
+
 ### Added
+- `session-indexer-eval --queries <file>` / `--gen-queries N`: recall-style queries written by
+  an LLM via `agy` for `--real-db` runs (secrets/PII filtered before chunk text is sent) (#91).
 - `session-indexer-eval --real-db <store> --facts N`: evaluate retrieval on a real session store (distilled facts as queries, their source chunks as evidence); snapshots the store via `VACUUM INTO` read-only, prints aggregates only. First result: hybrid ≈ BM25 > cosine (see docs/retrieval-eval.md).
 - `session-indexer-eval --modes hybrid`: harness-only Reciprocal Rank Fusion of cosine + BM25 (production `search` unchanged). First result on LoCoMo: equal-weight RRF lands between cosine and BM25, not above BM25 (see docs/retrieval-eval.md).
 - `make eval` / `cmd/session-indexer-eval`: retrieval-only quality harness (Recall@k, MRR, latency, context size) over the public LoCoMo benchmark — cosine vs BM25 fallback vs naive baseline, direct-insert vs through-`mine`. No LLM judge, no cloud calls, no schema change. New package `internal/eval`.
@@ -103,7 +121,8 @@ an FTS5 BM25 fallback), and `stats`. Schema-version guard on every DB
 open (hard error on mismatch, no silent auto-migration, by design). Stop
 hook wiring for automatic per-session indexing.
 
-[Unreleased]: https://github.com/valpere/session-indexer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/valpere/session-indexer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/valpere/session-indexer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valpere/session-indexer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valpere/session-indexer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/valpere/session-indexer/releases/tag/v0.1.0
