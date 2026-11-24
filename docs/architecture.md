@@ -532,7 +532,7 @@ session-indexer/
 │   │   └── _lib/hook-common.sh  — logging + shared session-log.md rotation (jq/bash, no python3)
 │   ├── settings.local.json
 ├── .gitignore
-├── go.mod                   — go 1.26.9
+├── go.mod                   — go 1.26.11
 └── Makefile
 ```
 
