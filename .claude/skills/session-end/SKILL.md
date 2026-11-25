@@ -20,12 +20,15 @@ an injected "previous state" was the main source of context poisoning.
 and inspected evidence. `/session-end show` prints it. Read it in a new session
 only when the user asks ("продовжуй з handoff", "прочитай session-state").
 
-Before writing, read the existing file and replace superseded status rather than
-appending another layer. Use Ukrainian prose and concrete source references
+Before writing, read the existing file and reconcile it with current task
+records: replace superseded status rather than appending another layer, and keep
+still-relevant decisions with their sources. Earlier verification stays evidence,
+with its source; another turn or session does not invalidate it. Use Ukrainian prose and concrete source references
 (transcript UUID/time, command result, commit, or authoritative document section).
 
 Keep it short. Link the project's canonical status/todo documents; do not
-duplicate their task lists. Keep each task's result, evidence, pending action and
+duplicate their task lists. Completed work belongs in the project's history/todo,
+not here; never carry dated balances or old leftovers as current state. Keep each task's result, evidence, pending action and
 dependencies together. Include an unresolved item only when it affects that task
 or a decision; omit empty sections, never invent gaps to fill a template.
 
@@ -37,7 +40,8 @@ or a decision; omit empty sections, never invent gaps to fill a template.
 
 ## Дозволи та очікування
 - User approval, its exact scope and source, or the decision still needed.
-- Mark completed/expired approvals; a past one-off action is not standing permission.
+- Mark completed/expired approvals; a past one-off action is neither standing
+  permission nor a permanent prohibition.
 
 ## Далі
 - Next action and links to current task documents.
@@ -49,7 +53,6 @@ the user's current instructions take precedence.
 
 Read the result back before claiming the handoff was written.
 
-`.claude/session-log.md` (LLM summaries written by the retired Stop hook) and
-`.claude/session-checkpoint.json` (the retired verbatim window) are no longer
-written or read. They may remain in old projects as unverified history; do not
-treat them as current state.
+`.claude/session-log.md` and `.claude/session-checkpoint.json`, where present,
+are unverified leftovers: nothing writes or reads them; never treat them as
+current state.
