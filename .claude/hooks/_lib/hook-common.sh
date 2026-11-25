@@ -21,7 +21,7 @@ hook_setup_logging() {
   echo "[$(date -Iseconds)] $script_name invoked" >> "$LOG_FILE"
 }
 
-# WHITELIST of project roots that may be indexed (session-recall) or dreamed —
+# WHITELIST of project roots that may be indexed (session-recall) or run by weekly —
 # user rule 2026-10-25 (supersedes the earlier blacklist): only projects under
 # ~/wrk/projects, ~/wrk/demo and this tooling repo ~/wrk/common_claude.
 # Everything else (~/wrk/projects_fh, ~/wrk/freelance, ~/wrk/oblabz, ...) is NEVER processed.

@@ -200,11 +200,11 @@ fi
 ### Check 8 — Skill Temp Dir Accumulation (informational)
 
 **Goal:** report `/tmp/<skill>-*` directories older than 7 days from
-interactive skill runs (`fix-review`, `lookup-docs`, `apply-dreaming`, etc).
+interactive skill runs (`fix-review`, `lookup-docs`, etc).
 
 ```bash
 COUNT=$(find /tmp -maxdepth 1 -type d -mtime +7 \
-  \( -name 'fix-review-*' -o -name 'lookup-docs-*' -o -name 'apply-dreaming-*' \) \
+  \( -name 'fix-review-*' -o -name 'lookup-docs-*' \) \
   2>/dev/null | wc -l | tr -d ' ')
 ```
 

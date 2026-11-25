@@ -155,7 +155,7 @@ both languages with equivalent quality.
 - Cloud sync or backup
 - MCP server wrapper (can be added later as a thin layer)
 - Litopys's full 6-type node taxonomy (person/project/system/concept/event/lesson) — one flat `facts` table is enough for a single-project tool
-- Litopys's skill-detector / quarantine-and-promote human-review workflow — redundant with this repo's existing `dreaming`/`apply-dreaming` cycle
+- Litopys's skill-detector / quarantine-and-promote human-review workflow — out of scope for a single-user tool
 - Cross-project facts
 - Per-fact embeddings (facts search is FTS5 BM25 only in v1 — facts are short, structured, and few per project)
 - Time-travel `--as-of` queries
