@@ -42,7 +42,6 @@ vendor/
 *.out
 
 # Session recall
-.claude/session-log.md
 .claude/sessions.db
 .claude/sessions.db-shm
 .claude/sessions.db-wal
@@ -67,11 +66,5 @@ docs/superpowers/
 tmp/
 sbin/
 
-# dreaming reports + run log: local analysis artifacts, not committed
-# (Val, 2026-10-14; W37, W39-W41 were committed once in #100 — untracked since)
-.claude/dreaming/reports/
-
-# Session recovery state (deterministic Stop-hook checkpoint + reviewed handoff)
-.claude/session-checkpoint.json
-.claude/session-checkpoint.json.lock
+# Manual /session-end handoff
 .claude/session-state.md

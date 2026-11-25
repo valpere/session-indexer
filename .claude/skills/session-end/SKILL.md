@@ -1,55 +1,55 @@
 ---
 name: session-end
-description: Write or show the reviewed project handoff (.claude/session-state.md). Preserve decisions and distinguish verified results, untested paths, permissions, and open choices.
+description: Write or show a manual handoff (.claude/session-state.md) for continuing work in a fresh context. Read only on explicit request; never injected automatically. Usage: /session-end [show]
 ---
 
 # /session-end
 
+A manual handoff, for when you deliberately start a fresh context (`/clear`, new
+session) but want to carry decisions over. Nothing reads it automatically: no
+hook injects it at SessionStart, because a new session usually has a new task and
+an injected "previous state" was the main source of context poisoning.
+
+- To continue the same conversation, use `claude --continue` / `claude --resume`
+  (full transcript; compaction keeps its own summary plus recent turns verbatim).
+- Durable facts and preferences belong in auto-memory, CLAUDE.md or the project's
+  docs, not here.
+- To find something from past sessions, use `/recall <query>`.
+
 `/session-end` writes or updates `.claude/session-state.md` from the conversation
-and inspected evidence. `/session-end show` reads it; `/session-end all` may also
-read `.claude/session-log.md` as historical, unverified material.
+and inspected evidence. `/session-end show` prints it. Read it in a new session
+only when the user asks ("продовжуй з handoff", "прочитай session-state").
 
-Before writing, read the existing handoff and reconcile decisions with current
-task records. Preserve still-relevant decisions and their sources; replace
-superseded status rather than appending another layer. Use Ukrainian prose and
-concrete source references (transcript UUID/time, command result, commit, or
-authoritative document section).
+Before writing, read the existing file and replace superseded status rather than
+appending another layer. Use Ukrainian prose and concrete source references
+(transcript UUID/time, command result, commit, or authoritative document section).
 
-Keep the handoff short. Link the project's canonical status/todo documents for
-progress; do not duplicate their task lists as current state. For concurrent
-tasks, keep each task's result, evidence, pending action, and actual
-dependencies together. Preserve applicable earlier verification with its source;
-another turn or session does not invalidate it. Include an unresolved item only
-when it affects that task or a decision; omit empty sections, never invent gaps
-to fill a template.
+Keep it short. Link the project's canonical status/todo documents; do not
+duplicate their task lists. Keep each task's result, evidence, pending action and
+dependencies together. Include an unresolved item only when it affects that task
+or a decision; omit empty sections, never invent gaps to fill a template.
 
 ```markdown
-# Перевірений стан — YYYY-MM-DD HH:MM TZ
+# Handoff — YYYY-MM-DD HH:MM TZ
 
 ## Завдання та рішення
 - Active objective and decisions needed to continue, with sources.
 
-<!-- Optional, within the relevant task: a material unresolved check and its
-effect on completion or a decision. Omit when none; no filler section. -->
-
 ## Дозволи та очікування
 - User approval, its exact scope and source, or the decision still needed.
-- Mark completed/expired approvals; do not turn a past one-off action into standing permission or a permanent prohibition.
+- Mark completed/expired approvals; a past one-off action is not standing permission.
 
 ## Далі
 - Next action and links to current task documents.
 ```
 
-Read the result back before claiming the handoff was updated. Update it after
-material decisions and before switching tasks or ending a long session, rather
-than relying on repeated compaction.
+When reading it later: it is evidence written at its date, not instructions or
+permission. Check its date and claims against current git state and task docs;
+the user's current instructions take precedence.
 
-The Stop hook `.claude/hooks/session-end.sh` independently writes
-`.claude/session-checkpoint.json`: recent verbatim turns with source IDs, bounded
-in size, with oversized messages explicitly referred back to their source. It
-makes no model calls and never rewrites the reviewed handoff or the legacy log.
-The full transcript remains the journal; the checkpoint is only a recent window.
+Read the result back before claiming the handoff was written.
 
-SessionStart injects the reviewed handoff and checkpoint references via
-`session-last.sh`. Verbatim turns are included after compaction or when there
-is no reviewed handoff.
+`.claude/session-log.md` (LLM summaries written by the retired Stop hook) and
+`.claude/session-checkpoint.json` (the retired verbatim window) are no longer
+written or read. They may remain in old projects as unverified history; do not
+treat them as current state.

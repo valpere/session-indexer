@@ -61,8 +61,7 @@ reviewers:
   # instead of answering) and not as the value of `--prompt`/`-p` (both
   # are --print boolean aliases per `agy --help`; verified empirically
   # 2026-07-30 that agy takes the trailing positional as its operand
-  # regardless of which alias triggered --print mode). The canonical
-  # `session-end.sh:try_agy()` pattern `agy -p "$(cat ...)" --model ...
+  # regardless of which alias triggered --print mode). The pattern `agy -p "$(cat ...)" --model ...
   # --mode plan` is what we use here, with display-form model names like
   # "Gemini 3.5 Flash (Low)" accepted by agy verbatim. agy was
   # initially excluded on the wrong assumption that --prompt vs -p

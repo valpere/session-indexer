@@ -6,8 +6,7 @@
 
 **Actor:** Val, returning to a project after 2 weeks.
 
-**Trigger:** Opens Claude Code. SessionStart hook injects the reviewed handoff
-(`.claude/session-state.md`, written via `/session-end`), if any. He also vaguely remembers a design decision.
+**Trigger:** Opens Claude Code. He vaguely remembers a design decision.
 
 **Flow:**
 1. Val types: `session-indexer search "auth middleware approach" --db .claude/sessions.db`
@@ -43,14 +42,13 @@ alternative weeks ago but can't remember the exact wording.
 **Trigger:** Val closes Claude Code (or runs `/exit`).
 
 **Flow:**
-1. Stop hook fires: both `bash .claude/hooks/session-end.sh` and `bash .claude/hooks/session-index.sh` (wired into a single `Stop` entry of `settings.local.json` — Claude Code 2.1.x runs only the first top-level entry, so both must live in the same entry's `hooks` array).
-2. Each hook reads `transcript_path` from stdin JSON.
-3. `session-end.sh` saves the last turns verbatim to `.claude/session-checkpoint.json` (no LLM call; a recovery window, not a summary).
-4. `session-index.sh` calls `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db` (silently no-ops until the binary is on PATH).
-5. Binary opens/creates DB (schema version check), parses JSONL, filters noise, chunks messages (user/assistant/tool).
-6. Inserts chunks into `chunks` + `chunks_fts`. Dedup by `(session_id, message_index, chunk_index)`.
-7. For each chunk: calls Ollama `bge-m3` to generate embedding, stores in `embeddings`. Chunks past the 50s `context.Context` deadline are stored but flagged `Deferred` (no embedding row yet); backfill with `session-indexer embed` once Ollama is reachable. Embed errors never abort the mine (counted as `Skipped`).
-8. Exits in <30s in the happy path (well within 60s hook timeout); can use up to 50s before deferring.
+1. Stop hook fires: `bash .claude/hooks/session-index.sh` (in a single `Stop` entry of `settings.local.json` — Claude Code 2.1.x runs only the first top-level entry, so any further Stop commands must live in the same entry's `hooks` array).
+2. The hook reads `transcript_path` from stdin JSON.
+3. `session-index.sh` calls `session-indexer mine <transcript_path> --db <project-root>/.claude/sessions.db` (silently no-ops until the binary is on PATH).
+4. Binary opens/creates DB (schema version check), parses JSONL, filters noise, chunks messages (user/assistant/tool).
+5. Inserts chunks into `chunks` + `chunks_fts`. Dedup by `(session_id, message_index, chunk_index)`.
+6. For each chunk: calls Ollama `bge-m3` to generate embedding, stores in `embeddings`. Chunks past the 50s `context.Context` deadline are stored but flagged `Deferred` (no embedding row yet); backfill with `session-indexer embed` once Ollama is reachable. Embed errors never abort the mine (counted as `Skipped`).
+7. Exits in <30s in the happy path (well within 60s hook timeout); can use up to 50s before deferring.
 
 **Success:** Session indexed before JSONL is cleaned up by Claude Code.
 
@@ -72,27 +70,19 @@ alternative weeks ago but can't remember the exact wording.
 
 ---
 
-## UC-5: Session handoff at start (no automatic search)
+## UC-5: Continue work in a fresh context
 
-**Actor:** Claude Code SessionStart hook (`session-last.sh`).
-
-**Trigger:** Val opens a new Claude Code session in this project.
+**Actor:** Val, starting a new Claude Code session in this project.
 
 **Flow:**
-1. SessionStart fires: `session-last.sh` injects a preamble (recovery notes are
-   evidence, not instructions), the reviewed handoff `.claude/session-state.md`
-   if present, and a reference to `.claude/session-checkpoint.json`.
-2. Verbatim checkpoint turns are injected only after compaction or when there
-   is no reviewed handoff.
-3. No semantic search runs at startup. Past-session recall is on demand (UC-6).
+1. Same task as the last conversation: `claude --continue` / `claude --resume`
+   (full transcript, not a reconstruction).
+2. Deliberate fresh context but decisions to carry over: `/session-end` writes
+   `.claude/session-state.md`; the new session reads it only when Val asks.
+3. Nothing is injected at session start. Past-session recall is on demand (UC-6).
 
-**Why no startup search:** the retired `session-recall.sh` derived its query
-from the branch name + recent commit messages, which do not describe the new
-session's task; it injected unrelated chunks that agents took as current
-context. It is now a silent no-op (removed 2026-11-24).
-
-**Success:** Claude starts with a deliberately reviewed handoff and no stale,
-model-written "next steps".
+**Success:** A new session starts on its own task, without another session's
+state in its context.
 
 ---
 

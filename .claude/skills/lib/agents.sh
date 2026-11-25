@@ -40,8 +40,7 @@ agent_agy() {
   # Pass the prompt as a trailing positional argument after `-p`. agy's
   # `-p` (and `--prompt`) are --print aliases in --help, but the actual
   # positional-argument semantics take the prompt text as their operand —
-  # the same pattern session-end.sh's try_agy() has been using in
-  # production. Stdin-only invocation does NOT work (agy returns a
+  # the pattern proven in the retired session-end.sh summary hook. Stdin-only invocation does NOT work (agy returns a
   # generic 'I am currently running on ...' greeting instead of answering
   # the prompt — verified 2026-07-30). `$(cat file)` strips any trailing
   # newline from the prompt; agy ignores that for prompt content.

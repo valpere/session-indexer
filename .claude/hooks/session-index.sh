@@ -1,7 +1,6 @@
 #!/bin/bash
 # Stop hook: indexes the session transcript into per-project SQLite via
-# session-indexer mine. Runs independently of session-end.sh so it fires
-# even when the summary step exits early (e.g. /session-end already ran).
+# session-indexer mine.
 
 set -uo pipefail
 [[ "${CLAUDE_NON_INTERACTIVE:-}" == "1" ]] && exit 0

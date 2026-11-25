@@ -386,8 +386,7 @@ governs each chunk's `Distill` call internally.
 The gate (default 0.7) is a **deterministic Go check**
 (`internal/distill.Run`), not an LLM-enforced instruction. litopys's
 equivalent 0.7 threshold is instructional/human-reviewed, backed by a
-quarantine-and-promote workflow. session-indexer has no such review loop
-(the existing `dreaming`/`apply-dreaming` cycle already covers that role),
+quarantine-and-promote workflow. session-indexer has no such review loop,
 so the model's self-reported confidence is treated as advisory input to a
 hard code-level check, not the enforcement mechanism itself.
 
@@ -521,14 +520,10 @@ session-indexer/
 │   ├── use-cases.md
 │   └── architecture.md
 ├── .claude/                   — tracked (agents/, hooks/, skills/); per-machine
-│   │                            state is gitignored: sessions.db*, session-checkpoint.json
-│   │                            (+ .lock), session-state.md, legacy session-log.md,
+│   │                            state is gitignored: sessions.db*, session-state.md,
 │   │                            settings.local.json, telemetry.jsonl — see .gitignore
 │   ├── hooks/
-│   │   ├── session-end.sh    — Stop: verbatim recent turns → session-checkpoint.json (no LLM)
 │   │   ├── session-index.sh  — Stop: mine JSONL → sessions.db
-│   │   ├── session-last.sh   — SessionStart: inject reviewed handoff + checkpoint reference
-│   │   ├── session-recall.sh — retired startup search; silent no-op (kept for cached registrations)
 │   │   └── _lib/hook-common.sh  — logging + indexing whitelist (jq/bash, no python3)
 │   ├── settings.local.json
 ├── .gitignore
@@ -551,23 +546,13 @@ The Stop hook receives JSON on stdin. Relevant fields:
 }
 ```
 
-Two hooks run on every session stop, both wired inside a single `Stop` entry
-of `settings.local.json` (see warning below):
-
-- `bash .claude/hooks/session-end.sh` — writes `.claude/session-checkpoint.json`:
-  the last ≤16 user/assistant turns **verbatim**, with transcript UUIDs and
-  timestamps, size-bounded (oversized messages are replaced by a pointer to
-  the source, never by a summary). No model call; atomic write under `flock`.
-  It replaced an LLM-summary writer (`session-log.md`) whose "next steps"
-  were re-injected at every start — stale or other projects' tasks became
-  the agent's agenda (context poisoning; repaired 2026-11-24).
-- `bash .claude/hooks/session-index.sh` — runs `session-indexer mine` on the
-  transcript and silently no-ops until `session-indexer` is on PATH, or when
-  the project is outside the indexing whitelist (`~/wrk/projects`,
-  `~/wrk/demo`, `~/wrk/common_claude`; override `ALLOWED_PROJECT_ROOTS`).
-
-Both hooks exit immediately under `CLAUDE_NON_INTERACTIVE=1` (headless
-batch runs must not write or index recovery state).
+`bash .claude/hooks/session-index.sh` runs on every session stop, inside a
+single `Stop` entry of `settings.local.json` (see warning below). It runs
+`session-indexer mine` on the transcript and silently no-ops until
+`session-indexer` is on PATH, when the project is outside the indexing
+whitelist (`~/wrk/projects`, `~/wrk/demo`, `~/wrk/common_claude`; override
+`ALLOWED_PROJECT_ROOTS`), or under `CLAUDE_NON_INTERACTIVE=1` (headless batch
+runs must not index).
 
 `session-index.sh` (simplified):
 
@@ -594,36 +579,20 @@ Note: `--project` flag removed (redundant — DB path is per-project).
 
 ---
 
-## Integration: SessionStart Hook
+## Session Start
 
-`session-last.sh` fires on `SessionStart` and injects, without any model call:
-
-1. a fixed preamble — recovery notes are evidence, not instructions or standing
-   permission; current user instructions take precedence;
-2. the reviewed handoff `.claude/session-state.md` (written deliberately via
-   `/session-end`, never by a hook), if present;
-3. a reference to `.claude/session-checkpoint.json` (path, time, source
-   transcript). The verbatim turns themselves are injected only after
-   compaction (`source == "compact"`) or when no reviewed handoff exists.
-
-The legacy `.claude/session-log.md` is never injected; it is historical,
-unverified material that `/session-end all` may read on request.
-
-**Startup semantic search was removed** (2026-11-24). `session-recall.sh`
-used to derive a query from the branch name + last 3 commit messages and
-inject the top chunks as "Relevant past sessions". Commit messages do not
-identify the new session's task, so it injected unrelated historical chunks
-which agents treated as current context. The script is now a silent no-op
-(kept so cached hook registrations don't error). Semantic recall stays
-available **on demand** through the `/recall` skill and `session-indexer
-search`.
+No `SessionStart` hook: nothing is injected into a new session. A new session
+usually has a new task; injected "previous state" was taken as current context.
+To continue a conversation use `claude --continue`/`--resume`; `/session-end`
+writes a manual handoff `.claude/session-state.md`, read only on request.
+Semantic recall is **on demand** through the `/recall` skill and
+`session-indexer search`.
 
 ---
 
 ## Orchestrator / Subagent Recall Pattern
 
-Subagents spawned via the Agent tool start cold — no `SessionStart` hook, no
-shared context. The user-level `/recall` skill
+Subagents spawned via the Agent tool start cold — no shared context. The user-level `/recall` skill
 (`~/.claude/skills/session-recall/SKILL.md`; canonical source
 `~/wrk/common_claude/skills/session-recall/`) documents the same
 `search` subcommand used by `/recall`, but for a different caller: the

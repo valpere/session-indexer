@@ -12,6 +12,12 @@ full per-PR history.
 
 ## [Unreleased]
 
+### Removed
+- Session-state hooks `session-end.sh`, `session-last.sh`, `session-recall.sh` and the
+  `.claude/session-checkpoint.json` they maintained: nothing is injected at session start.
+  Use `claude --continue`/`--resume`, the manual `/session-end` handoff, or `/recall`.
+- `/apply-dreaming` skill.
+
 ## [0.4.0] - 2026-11-24
 
 ### Security
