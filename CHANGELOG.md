@@ -16,6 +16,8 @@ full per-PR history.
 - Session-state hooks `session-end.sh`, `session-last.sh`, `session-recall.sh` and the
   `.claude/session-checkpoint.json` they maintained: nothing is injected at session start.
   Use `claude --continue`/`--resume`, the manual `/session-end` handoff, or `/recall`.
+  Existing installs: drop the `session-end.sh` Stop command and the `SessionStart` entry from
+  `.claude/settings.local.json`, then delete the scripts.
 - `/apply-dreaming` skill.
 
 ## [0.4.0] - 2026-11-24

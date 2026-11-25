@@ -66,5 +66,8 @@ docs/superpowers/
 tmp/
 sbin/
 
-# Manual /session-end handoff
+# Legacy session state (no longer written; never commit) + manual /session-end handoff
+.claude/session-log.md
+.claude/session-checkpoint.json
+.claude/session-checkpoint.json.lock
 .claude/session-state.md
