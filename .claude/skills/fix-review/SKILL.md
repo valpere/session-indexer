@@ -688,6 +688,14 @@ DISMISSED_COUNT=$(jq '[.[] | select(.ruling=="DISMISS")]   | length' "$RUN_DIR/a
 DEFERRED_COUNT=$( jq '[.[] | select(.ruling=="DEFER")]     | length' "$RUN_DIR/arbiter.json")
 ADDED_NEW_COUNT=$(jq '[.[] | select(.added_new == true)]   | length' "$RUN_DIR/arbiter.json")
 
+UNPARSED=""
+for n in $(seq 1 "$NUM_ROUNDS"); do
+  [ -f "$RUN_DIR/round_${n}.unparsed.txt" ] || continue
+  [ -n "$UNPARSED" ] && UNPARSED+="; "
+  UNPARSED+="round ${n} ($(head -1 "$RUN_DIR/round_${n}.meta"))"
+done
+UNPARSED="${UNPARSED:-none}"   # arbiter appends "— carried over" per round in Step 11
+
 PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
 ```
 
