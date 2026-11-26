@@ -1,9 +1,10 @@
 #!/bin/bash
 # Stop hook: indexes the session transcript into per-project SQLite via
-# session-indexer mine.
+# session-indexer mine. Projects outside the whitelist
+# (hook_project_allowed in _lib/hook-common.sh) are skipped.
 
 set -uo pipefail
-[[ "${CLAUDE_NON_INTERACTIVE:-}" == "1" ]] && exit 0
+[[ "${CLAUDE_NON_INTERACTIVE:-}" == "1" ]] && { cat >/dev/null || true; exit 0; }
 export PATH="$HOME/go/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 # shellcheck source=_lib/hook-common.sh
@@ -36,6 +37,6 @@ echo "[$(date -Iseconds)] session-index: mining $(basename "$TRANSCRIPT") → $D
 if session-indexer mine "$TRANSCRIPT" --db "$DB" >> "$LOG_FILE" 2>&1; then
     echo "[$(date -Iseconds)] session-index: done" >> "$LOG_FILE"
 else
-    MINE_EXIT=$?
+    MINE_EXIT=$?   # capture first: $(date) below resets $?
     echo "[$(date -Iseconds)] session-index: session-indexer exited $MINE_EXIT" >> "$LOG_FILE"
 fi
